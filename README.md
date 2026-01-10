@@ -279,6 +279,12 @@ git push
 
 ## 📚 ドキュメント
 
+### セットアップ・運用
+- [SETUP_GUIDE.md](SETUP_GUIDE.md) - システムセットアップガイド（管理者向け）
+- [CLIENT_MANUAL.md](CLIENT_MANUAL.md) - 使い方マニュアル（エンドユーザー向け）
+- [MANUAL_TRIGGER_GUIDE.md](MANUAL_TRIGGER_GUIDE.md) - GitHub Actions手動トリガー方法
+
+### 技術ドキュメント
 - [セットアップ手順](docs/SETUP_GITHUB_ACTIONS.md)
 - [GASコード](docs/GAS_コード.js)
 - [構成比較](docs/構成比較.md)

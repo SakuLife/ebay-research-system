@@ -1,0 +1,10 @@
+sites:
+  - name: "Rakuten"
+    enabled: true
+    priority: 1
+  - name: "AmazonJP"
+    enabled: true
+    priority: 2
+  - name: "Mercari"
+    enabled: false
+    priority: 99

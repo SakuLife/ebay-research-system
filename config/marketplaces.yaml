@@ -1,0 +1,5 @@
+default_market: "UK"
+markets:
+  UK: { currency: "GBP", site: "EBAY_GB" }
+  US: { currency: "USD", site: "EBAY_US" }
+  EU: { currency: "EUR", site: "EBAY_DE" }

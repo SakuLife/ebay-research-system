@@ -1,0 +1,9 @@
+default_category_id: null
+blocked_categories:
+  - "Perfume (hazmat?)"
+blocked_keywords:
+  - "perfume"
+  - "fragrance"
+  - "lithium"
+  - "battery"
+  - "alcohol"

@@ -1,0 +1,8 @@
+fees:
+  default:
+    percent: 0.12
+    fixed: 0.30
+shipping:
+  default_jpy: 800
+fx:
+  default_rate: 150.0

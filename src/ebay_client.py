@@ -127,108 +127,86 @@ class EbayClient:
                 print(f"  [INFO] Item {item_id} not found (may be sold/removed)")
             return None
 
-    def search_completed(self, keyword: str, market: str = "UK") -> List[ListingCandidate]:
+    def search_active_listings(self, keyword: str, market: str = "UK") -> List[ListingCandidate]:
         """
-        Search completed (sold) listings using eBay Finding API.
+        Search active listings using eBay Browse API.
+
+        Note: Finding API (findCompletedItems) has been deprecated.
+        This method uses Browse API to search active listings instead.
 
         Args:
             keyword: Search keyword
             market: Market (UK, US, EU) - default UK
 
         Returns:
-            List of ListingCandidate with sold items
+            List of ListingCandidate with active items
         """
-        from datetime import datetime, timedelta
+        token = self._get_access_token()
 
-        # Market to Global ID mapping
-        global_id_map = {
-            "UK": "EBAY-GB",
-            "US": "EBAY-US",
-            "EU": "EBAY-DE"  # Germany represents EU
+        # Market to Marketplace ID mapping
+        marketplace_map = {
+            "UK": "EBAY_GB",
+            "US": "EBAY_US",
+            "EU": "EBAY_DE"
         }
-        global_id = global_id_map.get(market, "EBAY-GB")
+        marketplace_id = marketplace_map.get(market, "EBAY_GB")
 
-        # Calculate 90 days ago
-        days_ago_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-EBAY-C-MARKETPLACE-ID": marketplace_id
+        }
 
-        # Check if we have a valid production App ID
-        if "-SBX-" in (self.finding_app_id or ""):
-            print(f"  [WARN] Sandbox App ID detected. Finding API requires production credentials.")
-            print(f"  [WARN] Set EBAY_PRODUCTION_APP_ID or use production EBAY_CLIENT_ID")
-            return []
-
-        # Build Finding API request parameters
+        # Search for active listings, sorted by best match (popular items first)
         params = {
-            "OPERATION-NAME": "findCompletedItems",
-            "SERVICE-VERSION": "1.0.0",
-            "SECURITY-APPNAME": self.finding_app_id,
-            "RESPONSE-DATA-FORMAT": "JSON",
-            "GLOBAL-ID": global_id,
-            "keywords": keyword,
-            "paginationInput.entriesPerPage": "100",
-            # Filter 0: Sold items only
-            "itemFilter(0).name": "SoldItemsOnly",
-            "itemFilter(0).value": "true",
-            # Filter 1: Condition (New or Used)
-            "itemFilter(1).name": "Condition",
-            "itemFilter(1).value(0)": "New",
-            "itemFilter(1).value(1)": "Used",
-            # Filter 2: Last 90 days
-            "itemFilter(2).name": "EndTimeFrom",
-            "itemFilter(2).value": days_ago_90,
+            "q": keyword,
+            "sort": "price",  # Sort by price to find competitive pricing
+            "limit": 50,  # Get more items to analyze
+            "filter": "buyingOptions:{FIXED_PRICE}"  # Only Buy It Now items
         }
+
+        url = f"{self.browse_url}/item_summary/search"
 
         try:
-            response = requests.get(self.finding_url, params=params, timeout=15)
+            response = requests.get(url, headers=headers, params=params, timeout=15)
 
-            # Check for API errors before raising
             if response.status_code != 200:
                 try:
                     error_data = response.json()
-                    error_msg = error_data.get("errorMessage", [{}])[0].get("error", [{}])[0].get("message", ["Unknown error"])[0]
-                    print(f"  [ERROR] Finding API error: {error_msg}")
+                    errors = error_data.get("errors", [])
+                    for err in errors:
+                        print(f"  [ERROR] Browse API: {err.get('message', 'Unknown error')}")
                 except:
-                    print(f"  [ERROR] Finding API HTTP {response.status_code}: {response.text[:200]}")
+                    print(f"  [ERROR] Browse API HTTP {response.status_code}: {response.text[:200]}")
                 return []
 
             data = response.json()
-
-            # Check for API-level errors in response
-            ack = data.get("findCompletedItemsResponse", [{}])[0].get("ack", ["Failure"])[0]
-            if ack != "Success":
-                errors = data.get("findCompletedItemsResponse", [{}])[0].get("errorMessage", [{}])[0].get("error", [])
-                for err in errors:
-                    print(f"  [ERROR] {err.get('message', ['Unknown'])[0]}")
-                return []
-
-            # Parse Finding API response
-            search_result = data.get("findCompletedItemsResponse", [{}])[0]
-            search_result_items = search_result.get("searchResult", [{}])[0]
-            items = search_result_items.get("item", [])
+            items = data.get("itemSummaries", [])
 
             if not items:
-                print(f"  [INFO] No sold items found for keyword: {keyword}")
+                print(f"  [INFO] No active listings found for keyword: {keyword}")
                 return []
 
             candidates = []
-            for item in items[:20]:  # Limit to top 20 sold items
+            for item in items[:20]:  # Limit to top 20 items
                 try:
-                    item_id = item.get("itemId", [""])[0]
-                    title = item.get("title", [""])[0]
-                    view_url = item.get("viewItemURL", [""])[0]
+                    item_id = item.get("itemId", "")
+                    title = item.get("title", "")
+                    view_url = item.get("itemWebUrl", "")
 
-                    # Get selling price
-                    selling_status = item.get("sellingStatus", [{}])[0]
-                    current_price = selling_status.get("currentPrice", [{}])[0]
-                    price = float(current_price.get("__value__", 0))
+                    # Get price
+                    price_info = item.get("price", {})
+                    price = float(price_info.get("value", 0))
 
-                    # Get shipping cost
-                    shipping_info = item.get("shippingInfo", [{}])[0]
-                    shipping_cost_data = shipping_info.get("shippingServiceCost", [{}])[0]
-                    shipping_cost = float(shipping_cost_data.get("__value__", 0))
+                    # Get shipping cost (if available)
+                    shipping_options = item.get("shippingOptions", [])
+                    shipping_cost = 0.0
+                    if shipping_options:
+                        shipping_cost_info = shipping_options[0].get("shippingCost", {})
+                        shipping_cost = float(shipping_cost_info.get("value", 0))
 
-                    # Sold signal: use quantity sold if available, otherwise 1
-                    quantity_sold = int(selling_status.get("quantitySold", [1])[0])
+                    # Use item sold quantity as signal (if available)
+                    # Browse API doesn't directly provide sold count, so we use 1 as default
+                    sold_signal = 1
 
                     candidate = ListingCandidate(
                         candidate_id=str(uuid.uuid4()),
@@ -236,20 +214,29 @@ class EbayClient:
                         ebay_item_url=view_url,
                         ebay_price=price,
                         ebay_shipping=shipping_cost,
-                        sold_signal=quantity_sold,
+                        sold_signal=sold_signal,
                     )
                     candidates.append(candidate)
 
-                except (KeyError, ValueError, IndexError) as e:
+                except (KeyError, ValueError, TypeError) as e:
                     print(f"  [WARN] Failed to parse item: {e}")
                     continue
 
-            print(f"  [INFO] Found {len(candidates)} sold items for '{keyword}'")
+            print(f"  [INFO] Found {len(candidates)} active listings for '{keyword}'")
             return candidates
 
         except requests.exceptions.RequestException as e:
-            print(f"  [ERROR] Finding API network error: {e}")
+            print(f"  [ERROR] Browse API network error: {e}")
             return []
+
+    # Keep old method name for backward compatibility
+    def search_completed(self, keyword: str, market: str = "UK") -> List[ListingCandidate]:
+        """
+        Deprecated: Finding API (findCompletedItems) has been decommissioned.
+        This now calls search_active_listings() using Browse API instead.
+        """
+        print(f"  [INFO] Using Browse API (Finding API deprecated)")
+        return self.search_active_listings(keyword, market)
 
     def find_current_lowest_price(self, keyword: str, market: str = "UK") -> Optional[Dict[str, Any]]:
         """

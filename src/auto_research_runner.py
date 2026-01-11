@@ -149,37 +149,28 @@ def main():
         print(f"Processing keyword: {keyword}")
         print(f"{'='*60}")
 
-        # Step 3: Search sold items on eBay (Finding API)
-        print(f"\n[3/6] Searching sold items on eBay...")
-        sold_items = ebay_client.search_completed(keyword, market=market)
+        # Step 3: Search active listings on eBay (Browse API)
+        # Note: Finding API (findCompletedItems) has been deprecated
+        print(f"\n[3/5] Searching eBay listings...")
+        active_items = ebay_client.search_active_listings(keyword, market=market)
 
-        if not sold_items:
-            print(f"  [WARN] No sold items found for '{keyword}'")
+        if not active_items:
+            print(f"  [WARN] No eBay listings found for '{keyword}'")
             continue
 
-        # Limit to top 5 sold items per keyword
-        sold_items = sold_items[:5]
+        # Limit to top 5 items per keyword
+        active_items = active_items[:5]
 
-        for sold_item in sold_items:
-            print(f"\n  Processing sold item: {sold_item.ebay_item_url}")
+        for item in active_items:
+            ebay_url = item.ebay_item_url
+            ebay_price = item.ebay_price
+            ebay_shipping = item.ebay_shipping
 
-            # Step 4: Find current lowest price (Browse API)
-            print(f"\n[4/6] Finding current lowest price...")
-            current_item = ebay_client.find_current_lowest_price(keyword, market=market)
+            print(f"\n  Processing: {ebay_url}")
+            print(f"  [INFO] eBay price: ${ebay_price} + ${ebay_shipping} shipping")
 
-            if not current_item:
-                print(f"  [WARN] No current listings found for '{keyword}'")
-                continue
-
-            ebay_url = current_item["url"]
-            ebay_price = current_item["price"]
-            ebay_shipping = current_item.get("shipping", 0)
-
-            print(f"  [INFO] Current lowest price: ${ebay_price} + ${ebay_shipping} shipping")
-            print(f"  [INFO] URL: {ebay_url}")
-
-            # Step 5: Search domestic sources (Rakuten + Amazon)
-            print(f"\n[5/6] Searching domestic sources...")
+            # Step 4: Search domestic sources (Rakuten + Amazon)
+            print(f"\n[4/5] Searching domestic sources...")
 
             # Search Rakuten
             rakuten_results = sourcing_client.rakuten_client.search(keyword)
@@ -201,8 +192,8 @@ def main():
             print(f"  [INFO] Best source: {best_source.source_site} - JPY {total_source_price}")
             print(f"  [INFO] URL: {best_source.source_url}")
 
-            # Step 6: Calculate profit
-            print(f"\n[6/6] Calculating profit...")
+            # Step 5: Calculate profit
+            print(f"\n[5/5] Calculating profit...")
 
             try:
                 # Use search base client for accurate calculation

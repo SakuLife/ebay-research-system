@@ -157,21 +157,42 @@ class GoogleSheetsClient:
         """
         Read keywords from the '設定＆キーワード' (Settings & Keywords) sheet.
 
+        Combines A列 (main keyword) + B列 (modifier) for search.
+        Example: A="Yu-Gi-Oh", B="Limited" → "Yu-Gi-Oh Limited"
+
         Returns:
-            List of keywords (non-empty strings from column A, starting from row 10)
+            List of combined keywords (starting from row 10)
         """
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
-            # Get all values from column A starting from row 10 (keyword section)
-            col_a_values = worksheet.col_values(1)
 
-            # Row 10 onwards are keywords (row 1-9 are settings)
-            # Filter out empty strings and section headers (starting with 【)
-            keywords = [
-                kw.strip()
-                for kw in col_a_values[9:]  # Skip rows 1-9 (settings section)
-                if kw and kw.strip() and not kw.strip().startswith('【')
-            ]
+            # Get all values from columns A and B
+            # Use get() to get a 2D range
+            all_values = worksheet.get("A10:B500")  # Get enough rows
+
+            if not all_values:
+                print(f"  [WARN] No keywords found in '設定＆キーワード' sheet")
+                return []
+
+            keywords = []
+            for row in all_values:
+                # Get A column (main keyword)
+                main_kw = row[0].strip() if len(row) > 0 and row[0] else ""
+
+                # Skip empty rows and section headers
+                if not main_kw or main_kw.startswith('【'):
+                    continue
+
+                # Get B column (modifier) if exists
+                modifier = row[1].strip() if len(row) > 1 and row[1] else ""
+
+                # Combine: "main modifier" or just "main"
+                if modifier:
+                    combined = f"{main_kw} {modifier}"
+                else:
+                    combined = main_kw
+
+                keywords.append(combined)
 
             print(f"  [INFO] Found {len(keywords)} keywords from '設定＆キーワード' sheet")
             return keywords

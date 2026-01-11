@@ -198,12 +198,10 @@ def main():
             try:
                 # Use search base client for accurate calculation
                 search_base_client.write_input_data(
-                    source_price_jpy=best_source.source_price_jpy,
+                    source_price_jpy=total_source_price,
                     ebay_price_usd=ebay_price,
                     ebay_shipping_usd=ebay_shipping,
-                    ebay_url=ebay_url,
-                    source_shipping_jpy=best_source.source_shipping_jpy,
-                    source_url=best_source.source_url
+                    ebay_url=ebay_url
                 )
 
                 calc_result = search_base_client.read_calculation_results(max_wait_seconds=5)

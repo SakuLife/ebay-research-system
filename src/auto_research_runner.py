@@ -173,9 +173,9 @@ def main():
             print(f"\n[4/5] Searching domestic sources...")
 
             # Search Rakuten
-            rakuten_results = sourcing_client.rakuten_client.search(keyword)
+            rakuten_results = sourcing_client.rakuten_client.search(keyword) or []
             # Search Amazon
-            amazon_results = sourcing_client.amazon_client.search(keyword)
+            amazon_results = sourcing_client.amazon_client.search(keyword) or []
 
             # Combine and sort by total price
             all_sources = rakuten_results + amazon_results

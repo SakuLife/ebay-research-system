@@ -40,27 +40,19 @@ function runAutoResearch() {
   }
 
   // 設定シートの存在確認
-  let settingsSheet = ss.getSheetByName('設定');
+  let settingsSheet = ss.getSheetByName('設定＆キーワード');
   if (!settingsSheet) {
-    // 設定シートが存在しない場合は作成
-    settingsSheet = ss.insertSheet('設定');
-    settingsSheet.getRange('A1').setValue('キーワード');
-
     SpreadsheetApp.getUi().alert(
-      '「設定」シートを作成しました。\n\n' +
-      'A列にキーワードを入力してください。\n' +
-      '例：\n' +
-      '  TOKIO INKARAMI\n' +
-      '  Shiseido\n' +
-      '  Pilot frixion'
+      'エラー: 「設定＆キーワード」シートが見つかりません。\n\n' +
+      'シートを作成してから再度実行してください。'
     );
     return;
   }
 
-  // A列のキーワードを取得（1行目はヘッダー）
-  const keywords = settingsSheet.getRange('A2:A').getValues()
+  // A列のキーワードを取得（9行目以降がキーワード）
+  const keywords = settingsSheet.getRange('A10:A').getValues()
     .map(row => row[0])
-    .filter(keyword => keyword && keyword.toString().trim() !== '');
+    .filter(keyword => keyword && keyword.toString().trim() !== '' && !keyword.toString().startsWith('【'));
 
   if (keywords.length === 0) {
     SpreadsheetApp.getUi().alert(

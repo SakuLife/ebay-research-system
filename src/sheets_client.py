@@ -127,31 +127,30 @@ class GoogleSheetsClient:
 
     def read_keywords_from_settings(self) -> List[str]:
         """
-        Read keywords from the '設定' (Settings) sheet.
+        Read keywords from the '設定＆キーワード' (Settings & Keywords) sheet.
 
         Returns:
-            List of keywords (non-empty strings from column A)
+            List of keywords (non-empty strings from column A, starting from row 10)
         """
         try:
-            worksheet = self.spreadsheet.worksheet("設定")
-            # Get all values from column A (keywords column)
+            worksheet = self.spreadsheet.worksheet("設定＆キーワード")
+            # Get all values from column A starting from row 10 (keyword section)
             col_a_values = worksheet.col_values(1)
 
-            # Skip header row (row 1) and filter out empty strings
+            # Row 10 onwards are keywords (row 1-9 are settings)
+            # Filter out empty strings and section headers (starting with 【)
             keywords = [
                 kw.strip()
-                for kw in col_a_values[1:]  # Skip header
-                if kw and kw.strip()
+                for kw in col_a_values[9:]  # Skip rows 1-9 (settings section)
+                if kw and kw.strip() and not kw.strip().startswith('【')
             ]
 
-            print(f"  [INFO] Found {len(keywords)} keywords from '設定' sheet")
+            print(f"  [INFO] Found {len(keywords)} keywords from '設定＆キーワード' sheet")
             return keywords
 
         except gspread.WorksheetNotFound:
-            print(f"  [WARN] '設定' sheet not found. Creating empty settings sheet.")
-            # Create settings sheet with header
-            worksheet = self.spreadsheet.add_worksheet(title="設定", rows=100, cols=5)
-            worksheet.update(range_name="A1", values=[["キーワード"]])
+            print(f"  [ERROR] '設定＆キーワード' sheet not found!")
+            print(f"  [ERROR] Please create the settings sheet first.")
             return []
 
 

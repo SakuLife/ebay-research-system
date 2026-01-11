@@ -370,8 +370,7 @@ class AmazonPaapiClient:
     def search_multiple(self, keyword: str, max_results: int = 5) -> List[SourceOffer]:
         """Search for multiple offers from Amazon, sorted by price."""
         if not self.is_enabled:
-            print(f"  [Amazon] APIキーが設定されていません")
-            return []
+            return []  # Silent - Amazon not configured
 
         host = "webservices.amazon.co.jp"
         endpoint = f"https://{host}/paapi5/searchitems"
@@ -389,44 +388,28 @@ class AmazonPaapiClient:
         payload_json = json.dumps(payload)
         headers = self._build_headers(payload_json, host)
 
-        print(f"  [Amazon] リクエスト送信: キーワード='{keyword}', 最大件数={min(max_results, 10)}")
-
         try:
             resp = requests.post(endpoint, data=payload_json, headers=headers, timeout=20)
-            print(f"  [Amazon] レスポンスステータス: {resp.status_code}")
             resp.raise_for_status()
             data = resp.json()
-            print(f"  [Amazon] レスポンス受信成功")
-        except requests.RequestException as e:
-            print(f"  [Amazon] エラー: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                print(f"  [Amazon] エラー詳細: {e.response.text[:500]}")
-            return []
+        except requests.RequestException:
+            return []  # Silent failure
 
         items = data.get("SearchResult", {}).get("Items", [])
-        print(f"  [Amazon] 検索結果アイテム数: {len(items)}")
 
         if not items:
-            # エラーメッセージがある場合は表示
-            errors = data.get("Errors", [])
-            if errors:
-                for error in errors:
-                    print(f"  [Amazon] APIエラー: {error.get('Code')} - {error.get('Message')}")
             return []
 
         # Convert all items to SourceOffer
         offers = []
-        for idx, item in enumerate(items):
+        for item in items:
             detail_url = item.get("DetailPageURL", "")
-            title = item.get("ItemInfo", {}).get("Title", {}).get("DisplayValue", "不明")
             price_info = (
                 item.get("Offers", {})
                 .get("Listings", [{}])[0]
                 .get("Price", {})
             )
             amount = price_info.get("Amount")
-
-            print(f"  [Amazon] 商品{idx+1}: {title[:30]}... - 価格: {amount}")
 
             if amount is not None and detail_url:
                 offers.append(SourceOffer(

@@ -57,21 +57,21 @@ settings_data = [
     ["【基本設定】", "", ""],
     ["検索市場", "UK", "eBay検索対象市場（UK/US/EU）"],
     ["検索期間", "90日", "販売実績の検索期間（30日/60日/90日）"],
-    ["最低利益額", "1円", "候補として抽出する最低利益額（円）"],
+    ["最低利益額", "フィルターなし", "候補として抽出する最低利益額（フィルターなし=全件出力）"],
     ["", "", ""],  # Empty row
     ["【キーワード設定】", "", ""],
-    ["キーワード", "", "eBayで検索するキーワード（1行1キーワード）"],
+    ["キーワード", "修飾語", "A列+B列で組み合わせて検索"],
 ]
 
-# Keyword examples
+# Keyword examples (2-column format: Main keyword + Modifier)
 keyword_examples = [
-    ["TOKIO INKARAMI", "", "日本製ヘアケア商品"],
-    ["Shiseido", "", "資生堂製品"],
-    ["Pilot frixion", "", "パイロット フリクションペン"],
-    ["KOSE Sekkisei", "", "コーセー雪肌精"],
-    ["DHC", "", "DHC化粧品・サプリ"],
-    ["Anessa sunscreen", "", "資生堂アネッサ日焼け止め"],
-    ["Senka perfect whip", "", "専科パーフェクトホイップ"],
+    ["Yu-Gi-Oh", "Limited"],
+    ["Gundam", "Vintage"],
+    ["Pokemon", "Japanese"],
+    ["Hello Kitty", "Rare"],
+    ["Shiseido", ""],
+    ["Japanese knife", ""],
+    ["Senka", "perfect whip"],
 ]
 
 # Combine all data
@@ -141,7 +141,7 @@ if HAS_FORMATTING:
 
         # Minimum profit dropdown (B6)
         rule_profit = DataValidationRule(
-            BooleanCondition('ONE_OF_LIST', ['1円', '500円', '1000円', '2000円', '3000円', '5000円']),
+            BooleanCondition('ONE_OF_LIST', ['フィルターなし', '1円', '500円', '1000円', '2000円', '3000円', '5000円']),
             showCustomUi=True
         )
         set_data_validation_for_cell_range(worksheet, 'B6', rule_profit)

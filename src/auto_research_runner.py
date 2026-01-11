@@ -123,13 +123,17 @@ def main():
     settings = sheets_client.read_settings()
 
     market = settings.get("market", "UK")
-    min_profit_str = settings.get("min_profit", "1円")
+    min_profit_str = settings.get("min_profit", "フィルターなし")
 
-    # Parse min_profit (remove "円" and convert to int)
-    min_profit_jpy = int(min_profit_str.replace("円", "").replace(",", ""))
-
-    print(f"  [INFO] Market: {market}")
-    print(f"  [INFO] Minimum profit: JPY {min_profit_jpy}")
+    # Parse min_profit (handle "フィルターなし" = no filter)
+    if min_profit_str == "フィルターなし" or not min_profit_str:
+        min_profit_jpy = None  # No filter
+        print(f"  [INFO] Market: {market}")
+        print(f"  [INFO] Minimum profit: フィルターなし（全件出力）")
+    else:
+        min_profit_jpy = int(min_profit_str.replace("円", "").replace(",", ""))
+        print(f"  [INFO] Market: {market}")
+        print(f"  [INFO] Minimum profit: JPY {min_profit_jpy}")
 
     print(f"\n[2/6] Reading keywords from '設定＆キーワード' sheet...")
     keywords = sheets_client.read_keywords_from_settings()
@@ -233,8 +237,8 @@ def main():
 
             print(f"  [INFO] Profit (no rebate): JPY {profit_no_rebate:.0f} ({profit_margin_no_rebate:.1f}%)")
 
-            # Check if profit meets minimum threshold
-            if profit_no_rebate < min_profit_jpy:
+            # Check if profit meets minimum threshold (skip if no filter set)
+            if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
                 print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy}")
                 continue
 

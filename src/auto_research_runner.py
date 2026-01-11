@@ -172,10 +172,10 @@ def main():
             # Step 4: Search domestic sources (Rakuten + Amazon)
             print(f"\n[4/5] Searching domestic sources...")
 
-            # Search Rakuten
-            rakuten_results = sourcing_client.rakuten_client.search(keyword) or []
-            # Search Amazon
-            amazon_results = sourcing_client.amazon_client.search(keyword) or []
+            # Search Rakuten (returns list)
+            rakuten_results = sourcing_client.rakuten_client.search_multiple(keyword, max_results=5)
+            # Search Amazon (returns list)
+            amazon_results = sourcing_client.amazon_client.search_multiple(keyword, max_results=5)
 
             # Combine and sort by total price
             all_sources = rakuten_results + amazon_results

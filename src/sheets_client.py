@@ -125,6 +125,35 @@ class GoogleSheetsClient:
         values = [getattr(row, field, "") for field in LISTED_HEADERS]
         worksheet.append_row(values)
 
+    def read_keywords_from_settings(self) -> List[str]:
+        """
+        Read keywords from the '設定' (Settings) sheet.
+
+        Returns:
+            List of keywords (non-empty strings from column A)
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet("設定")
+            # Get all values from column A (keywords column)
+            col_a_values = worksheet.col_values(1)
+
+            # Skip header row (row 1) and filter out empty strings
+            keywords = [
+                kw.strip()
+                for kw in col_a_values[1:]  # Skip header
+                if kw and kw.strip()
+            ]
+
+            print(f"  [INFO] Found {len(keywords)} keywords from '設定' sheet")
+            return keywords
+
+        except gspread.WorksheetNotFound:
+            print(f"  [WARN] '設定' sheet not found. Creating empty settings sheet.")
+            # Create settings sheet with header
+            worksheet = self.spreadsheet.add_worksheet(title="設定", rows=100, cols=5)
+            worksheet.update(range_name="A1", values=[["キーワード"]])
+            return []
+
 
 class LocalSheetsClient:
     """Local CSV-based client for testing."""

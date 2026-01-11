@@ -125,6 +125,34 @@ class GoogleSheetsClient:
         values = [getattr(row, field, "") for field in LISTED_HEADERS]
         worksheet.append_row(values)
 
+    def read_settings(self) -> Dict[str, str]:
+        """
+        Read settings from the '設定＆キーワード' sheet.
+
+        Returns:
+            Dict with settings: market, period, min_profit
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet("設定＆キーワード")
+
+            # Read settings from B column (rows 4-6)
+            market = worksheet.acell('B4').value or "UK"
+            period = worksheet.acell('B5').value or "90日"
+            min_profit = worksheet.acell('B6').value or "1円"
+
+            return {
+                "market": market,
+                "period": period,
+                "min_profit": min_profit
+            }
+        except gspread.WorksheetNotFound:
+            print(f"  [WARN] '設定＆キーワード' sheet not found. Using defaults.")
+            return {
+                "market": "UK",
+                "period": "90日",
+                "min_profit": "1円"
+            }
+
     def read_keywords_from_settings(self) -> List[str]:
         """
         Read keywords from the '設定＆キーワード' (Settings & Keywords) sheet.

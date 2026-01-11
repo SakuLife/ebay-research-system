@@ -118,12 +118,24 @@ def main():
     # Initialize search base client for profit calculation
     search_base_client = SearchBaseClient(sheets_client)
 
-    # Step 1: Read keywords from '設定' sheet
-    print(f"\n[1/5] Reading keywords from '設定' sheet...")
+    # Step 1: Read settings and keywords from '設定＆キーワード' sheet
+    print(f"\n[1/6] Reading settings from '設定＆キーワード' sheet...")
+    settings = sheets_client.read_settings()
+
+    market = settings.get("market", "UK")
+    min_profit_str = settings.get("min_profit", "1円")
+
+    # Parse min_profit (remove "円" and convert to int)
+    min_profit_jpy = int(min_profit_str.replace("円", "").replace(",", ""))
+
+    print(f"  [INFO] Market: {market}")
+    print(f"  [INFO] Minimum profit: JPY {min_profit_jpy}")
+
+    print(f"\n[2/6] Reading keywords from '設定＆キーワード' sheet...")
     keywords = sheets_client.read_keywords_from_settings()
 
     if not keywords:
-        print(f"  [ERROR] No keywords found in '設定' sheet!")
+        print(f"  [ERROR] No keywords found in '設定＆キーワード' sheet!")
         sys.exit(1)
 
     print(f"  [INFO] Keywords: {', '.join(keywords)}")
@@ -137,9 +149,9 @@ def main():
         print(f"Processing keyword: {keyword}")
         print(f"{'='*60}")
 
-        # Step 2: Search sold items on eBay (Finding API)
-        print(f"\n[2/5] Searching sold items on eBay...")
-        sold_items = ebay_client.search_completed(keyword, market="UK")
+        # Step 3: Search sold items on eBay (Finding API)
+        print(f"\n[3/6] Searching sold items on eBay...")
+        sold_items = ebay_client.search_completed(keyword, market=market)
 
         if not sold_items:
             print(f"  [WARN] No sold items found for '{keyword}'")
@@ -151,9 +163,9 @@ def main():
         for sold_item in sold_items:
             print(f"\n  Processing sold item: {sold_item.ebay_item_url}")
 
-            # Step 3: Find current lowest price (Browse API)
-            print(f"\n[3/5] Finding current lowest price...")
-            current_item = ebay_client.find_current_lowest_price(keyword, market="UK")
+            # Step 4: Find current lowest price (Browse API)
+            print(f"\n[4/6] Finding current lowest price...")
+            current_item = ebay_client.find_current_lowest_price(keyword, market=market)
 
             if not current_item:
                 print(f"  [WARN] No current listings found for '{keyword}'")
@@ -166,8 +178,8 @@ def main():
             print(f"  [INFO] Current lowest price: ${ebay_price} + ${ebay_shipping} shipping")
             print(f"  [INFO] URL: {ebay_url}")
 
-            # Step 4: Search domestic sources (Rakuten + Amazon)
-            print(f"\n[4/5] Searching domestic sources...")
+            # Step 5: Search domestic sources (Rakuten + Amazon)
+            print(f"\n[5/6] Searching domestic sources...")
 
             # Search Rakuten
             rakuten_results = sourcing_client.rakuten_client.search(keyword)
@@ -189,8 +201,8 @@ def main():
             print(f"  [INFO] Best source: {best_source.source_site} - JPY {total_source_price}")
             print(f"  [INFO] URL: {best_source.source_url}")
 
-            # Step 5: Calculate profit
-            print(f"\n[5/5] Calculating profit...")
+            # Step 6: Calculate profit
+            print(f"\n[6/6] Calculating profit...")
 
             try:
                 # Use search base client for accurate calculation
@@ -231,6 +243,11 @@ def main():
                 profit_margin_with_rebate = 0
 
             print(f"  [INFO] Profit (no rebate): JPY {profit_no_rebate:.0f} ({profit_margin_no_rebate:.1f}%)")
+
+            # Check if profit meets minimum threshold
+            if profit_no_rebate < min_profit_jpy:
+                print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy}")
+                continue
 
             # Write to spreadsheet
             result_data = {

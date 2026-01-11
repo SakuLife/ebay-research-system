@@ -31,6 +31,8 @@ jobs:
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
           EBAY_USE_SANDBOX: ${{ secrets.EBAY_USE_SANDBOX }}
+          # Production App ID for Finding API (required for real sold data)
+          EBAY_PRODUCTION_APP_ID: ${{ secrets.EBAY_PRODUCTION_APP_ID }}
 
           # 楽天 API
           RAKUTEN_APPLICATION_ID: ${{ secrets.RAKUTEN_APPLICATION_ID }}

@@ -21,15 +21,21 @@ class EbayClient:
         self.client_secret = os.getenv("EBAY_CLIENT_SECRET")
         self.use_sandbox = os.getenv("EBAY_USE_SANDBOX", "true").lower() == "true"
 
-        # Sandbox or Production endpoints
+        # Production App ID for Finding API (optional, falls back to client_id)
+        # Finding API requires production credentials to get real sold data
+        self.finding_app_id = os.getenv("EBAY_PRODUCTION_APP_ID", self.client_id)
+
+        # Sandbox or Production endpoints for OAuth/Browse API
         if self.use_sandbox:
             self.oauth_url = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
             self.browse_url = "https://api.sandbox.ebay.com/buy/browse/v1"
-            self.finding_url = "https://svcs.sandbox.ebay.com/services/search/FindingService/v1"
         else:
             self.oauth_url = "https://api.ebay.com/identity/v1/oauth2/token"
             self.browse_url = "https://api.ebay.com/buy/browse/v1"
-            self.finding_url = "https://svcs.ebay.com/services/search/FindingService/v1"
+
+        # Finding API ALWAYS uses production (sandbox has no data)
+        # It only requires APP-ID auth, not OAuth
+        self.finding_url = "https://svcs.ebay.com/services/search/FindingService/v1"
 
         self._access_token: Optional[str] = None
 
@@ -145,11 +151,17 @@ class EbayClient:
         # Calculate 90 days ago
         days_ago_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
+        # Check if we have a valid production App ID
+        if "-SBX-" in (self.finding_app_id or ""):
+            print(f"  [WARN] Sandbox App ID detected. Finding API requires production credentials.")
+            print(f"  [WARN] Set EBAY_PRODUCTION_APP_ID or use production EBAY_CLIENT_ID")
+            return []
+
         # Build Finding API request parameters
         params = {
             "OPERATION-NAME": "findCompletedItems",
             "SERVICE-VERSION": "1.0.0",
-            "SECURITY-APPNAME": self.client_id,
+            "SECURITY-APPNAME": self.finding_app_id,
             "RESPONSE-DATA-FORMAT": "JSON",
             "GLOBAL-ID": global_id,
             "keywords": keyword,

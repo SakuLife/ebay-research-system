@@ -26,6 +26,29 @@ class SourcingClient:
             partner_tag=os.getenv("AMAZON_PARTNER_TAG"),
             marketplace=os.getenv("AMAZON_MARKETPLACE", "JP"),
         )
+        self.yahoo = YahooShoppingClient(
+            app_id=os.getenv("YAHOO_APP_ID"),
+        )
+        self.serpapi = SerpApiClient(
+            api_key=os.getenv("SERPAPI_API_KEY"),
+        )
+
+    # Expose individual clients for direct access
+    @property
+    def rakuten_client(self):
+        return self.rakuten
+
+    @property
+    def amazon_client(self):
+        return self.amazon
+
+    @property
+    def yahoo_client(self):
+        return self.yahoo
+
+    @property
+    def serpapi_client(self):
+        return self.serpapi
 
     def search_best_offer(self, listing: ListingCandidate) -> Optional[SourceOffer]:
         offers = []
@@ -37,12 +60,16 @@ class SourcingClient:
             offer = self.amazon.search(listing.search_query)
             if offer:
                 offers.append(offer)
+        if self.yahoo.is_enabled:
+            offer = self.yahoo.search(listing.search_query)
+            if offer:
+                offers.append(offer)
         if not offers:
             return None
         return min(offers, key=lambda o: o.source_price_jpy + o.source_shipping_jpy)
 
     def search_multiple_offers(self, listing: ListingCandidate, max_results: int = 3) -> List[SourceOffer]:
-        """Search for multiple sourcing offers from Rakuten and Amazon, sorted by total price."""
+        """Search for multiple sourcing offers from all enabled sources, sorted by total price."""
         offers = []
 
         # Get multiple offers from Rakuten
@@ -63,7 +90,47 @@ class SourcingClient:
         else:
             print(f"  [DEBUG] Amazon検索: 無効（APIキー未設定）")
 
+        # Get multiple offers from Yahoo! Shopping
+        if self.yahoo.is_enabled:
+            print(f"  [DEBUG] Yahoo!ショッピング検索: 有効")
+            yahoo_offers = self.yahoo.search_multiple(listing.search_query, max_results=max_results)
+            print(f"  [DEBUG] Yahoo!ショッピング検索結果: {len(yahoo_offers)}件")
+            offers.extend(yahoo_offers)
+        else:
+            print(f"  [DEBUG] Yahoo!ショッピング検索: 無効（APIキー未設定）")
+
         # Sort by total price (price + shipping) and return top N
+        if not offers:
+            return []
+
+        offers.sort(key=lambda o: o.source_price_jpy + o.source_shipping_jpy)
+        return offers[:max_results]
+
+    def search_all_sites(self, keyword: str, max_results: int = 3) -> List[SourceOffer]:
+        """Search all sites including SerpApi (Google Shopping) for comprehensive results."""
+        offers = []
+
+        # First try SerpApi for comprehensive Google Shopping results
+        if self.serpapi.is_enabled:
+            print(f"  [DEBUG] SerpApi (全サイト検索): 有効")
+            serpapi_offers = self.serpapi.search_google_shopping(keyword, max_results=max_results * 2)
+            print(f"  [DEBUG] SerpApi検索結果: {len(serpapi_offers)}件")
+            offers.extend(serpapi_offers)
+
+        # Also get direct API results for accuracy
+        if self.rakuten.is_enabled:
+            rakuten_offers = self.rakuten.search_multiple(keyword, max_results=max_results)
+            offers.extend(rakuten_offers)
+
+        if self.amazon.is_enabled:
+            amazon_offers = self.amazon.search_multiple(keyword, max_results=max_results)
+            offers.extend(amazon_offers)
+
+        if self.yahoo.is_enabled:
+            yahoo_offers = self.yahoo.search_multiple(keyword, max_results=max_results)
+            offers.extend(yahoo_offers)
+
+        # Sort by total price and return top N
         if not offers:
             return []
 
@@ -371,5 +438,185 @@ class AmazonPaapiClient:
                 ))
 
         # Sort by price and return top N
+        offers.sort(key=lambda o: o.source_price_jpy)
+        return offers[:max_results]
+
+
+class YahooShoppingClient:
+    """Yahoo! Shopping Web Service API client."""
+
+    def __init__(self, app_id: Optional[str]) -> None:
+        self.app_id = app_id
+        self.is_enabled = bool(self.app_id)
+
+    def search(self, keyword: str) -> Optional[SourceOffer]:
+        """Search for the cheapest item on Yahoo! Shopping."""
+        if not self.is_enabled:
+            return None
+
+        params = {
+            "appid": self.app_id,
+            "query": keyword,
+            "results": "5",
+            "sort": "+price",  # Sort by price ascending
+        }
+
+        try:
+            resp = requests.get(
+                "https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch",
+                params=params,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            print(f"  [Yahoo] Error: {e}")
+            return None
+
+        hits = data.get("hits", [])
+        if not hits:
+            return None
+
+        # Get the cheapest item
+        item = hits[0]
+        price = float(item.get("price", 0))
+        url = item.get("url", "")
+
+        if price <= 0 or not url:
+            return None
+
+        return SourceOffer(
+            source_site="Yahoo",
+            source_url=url,
+            source_price_jpy=price,
+            source_shipping_jpy=0.0,
+            stock_hint="unknown",
+        )
+
+    def search_multiple(self, keyword: str, max_results: int = 5) -> List[SourceOffer]:
+        """Search for multiple items on Yahoo! Shopping."""
+        if not self.is_enabled:
+            return []
+
+        params = {
+            "appid": self.app_id,
+            "query": keyword,
+            "results": str(min(max_results, 50)),  # Yahoo API max is 50
+            "sort": "+price",  # Sort by price ascending
+        }
+
+        try:
+            resp = requests.get(
+                "https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch",
+                params=params,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            print(f"  [Yahoo] Error: {e}")
+            return []
+
+        hits = data.get("hits", [])
+        if not hits:
+            return []
+
+        offers = []
+        for item in hits:
+            price = float(item.get("price", 0))
+            url = item.get("url", "")
+
+            if price > 0 and url:
+                offers.append(SourceOffer(
+                    source_site="Yahoo",
+                    source_url=url,
+                    source_price_jpy=price,
+                    source_shipping_jpy=0.0,
+                    stock_hint="unknown",
+                ))
+
+        return offers[:max_results]
+
+
+class SerpApiClient:
+    """
+    SerpApi client for Google Shopping search (all sites).
+
+    SerpApi pricing (as of 2024):
+    - Free: 100 searches/month
+    - Developer: $50/month - 5,000 searches
+    - Business: $130/month - 15,000 searches
+
+    This enables searching across ALL shopping sites at once via Google Shopping.
+    """
+
+    def __init__(self, api_key: Optional[str]) -> None:
+        self.api_key = api_key
+        self.is_enabled = bool(self.api_key)
+
+    def search_google_shopping(self, keyword: str, max_results: int = 10) -> List[SourceOffer]:
+        """
+        Search Google Shopping via SerpApi.
+        This returns results from multiple shopping sites including:
+        - Amazon, Rakuten, Yahoo Shopping
+        - Yodobashi, Bic Camera, etc.
+        - Various other Japanese e-commerce sites
+        """
+        if not self.is_enabled:
+            return []
+
+        params = {
+            "api_key": self.api_key,
+            "engine": "google_shopping",
+            "q": keyword,
+            "location": "Japan",
+            "hl": "ja",
+            "gl": "jp",
+            "num": str(max_results),
+        }
+
+        try:
+            resp = requests.get(
+                "https://serpapi.com/search",
+                params=params,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            print(f"  [SerpApi] Error: {e}")
+            return []
+
+        shopping_results = data.get("shopping_results", [])
+        if not shopping_results:
+            return []
+
+        offers = []
+        for item in shopping_results:
+            # Extract price (format: "1,234円" or "$12.34")
+            price_str = item.get("extracted_price", 0)
+            if isinstance(price_str, str):
+                # Remove currency symbols and commas
+                price_str = price_str.replace("¥", "").replace("円", "").replace(",", "").strip()
+                try:
+                    price = float(price_str)
+                except ValueError:
+                    continue
+            else:
+                price = float(price_str) if price_str else 0
+
+            link = item.get("link", "")
+            source = item.get("source", "Unknown")
+
+            if price > 0 and link:
+                offers.append(SourceOffer(
+                    source_site=source,
+                    source_url=link,
+                    source_price_jpy=price,
+                    source_shipping_jpy=0.0,
+                    stock_hint="unknown",
+                ))
+
+        # Sort by price
         offers.sort(key=lambda o: o.source_price_jpy)
         return offers[:max_results]

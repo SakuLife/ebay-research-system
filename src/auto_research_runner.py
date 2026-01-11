@@ -208,9 +208,9 @@ def main():
 
                 if calc_result and calc_result.get("profit_no_rebate") is not None:
                     profit_no_rebate = calc_result["profit_no_rebate"]
-                    profit_margin_no_rebate = calc_result["profit_margin_no_rebate"]
+                    profit_margin_no_rebate = calc_result.get("margin_no_rebate", 0)
                     profit_with_rebate = calc_result.get("profit_with_rebate", 0)
-                    profit_margin_with_rebate = calc_result.get("profit_margin_with_rebate", 0)
+                    profit_margin_with_rebate = calc_result.get("margin_with_rebate", 0)
                 else:
                     # Fallback to Python calculation
                     profit_result = calculate_profit(

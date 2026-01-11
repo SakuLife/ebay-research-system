@@ -180,8 +180,26 @@ class EbayClient:
 
         try:
             response = requests.get(self.finding_url, params=params, timeout=15)
-            response.raise_for_status()
+
+            # Check for API errors before raising
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("errorMessage", [{}])[0].get("error", [{}])[0].get("message", ["Unknown error"])[0]
+                    print(f"  [ERROR] Finding API error: {error_msg}")
+                except:
+                    print(f"  [ERROR] Finding API HTTP {response.status_code}: {response.text[:200]}")
+                return []
+
             data = response.json()
+
+            # Check for API-level errors in response
+            ack = data.get("findCompletedItemsResponse", [{}])[0].get("ack", ["Failure"])[0]
+            if ack != "Success":
+                errors = data.get("findCompletedItemsResponse", [{}])[0].get("errorMessage", [{}])[0].get("error", [])
+                for err in errors:
+                    print(f"  [ERROR] {err.get('message', ['Unknown'])[0]}")
+                return []
 
             # Parse Finding API response
             search_result = data.get("findCompletedItemsResponse", [{}])[0]
@@ -230,7 +248,7 @@ class EbayClient:
             return candidates
 
         except requests.exceptions.RequestException as e:
-            print(f"  [ERROR] Finding API error: {e}")
+            print(f"  [ERROR] Finding API network error: {e}")
             return []
 
     def find_current_lowest_price(self, keyword: str, market: str = "UK") -> Optional[Dict[str, Any]]:

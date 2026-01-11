@@ -153,10 +153,21 @@ def main():
         print(f"Processing keyword: {keyword}")
         print(f"{'='*60}")
 
-        # Step 3: Search active listings on eBay (Browse API)
-        # Note: Finding API (findCompletedItems) has been deprecated
+        # Step 3: Search eBay listings
+        # Try Marketplace Insights API first (sold items with sold count)
+        # Fall back to Browse API if Insights API is not available
         print(f"\n[3/5] Searching eBay listings...")
-        active_items = ebay_client.search_active_listings(keyword, market=market)
+
+        # Try Marketplace Insights API first (requires Limited Release access)
+        sold_items = ebay_client.search_sold_items(keyword, market=market, min_sold=2)
+
+        if sold_items:
+            print(f"  [INFO] Using Marketplace Insights API (sold items)")
+            active_items = sold_items
+        else:
+            # Fall back to Browse API (active listings)
+            print(f"  [INFO] Falling back to Browse API (active listings)")
+            active_items = ebay_client.search_active_listings(keyword, market=market)
 
         if not active_items:
             print(f"  [WARN] No eBay listings found for '{keyword}'")

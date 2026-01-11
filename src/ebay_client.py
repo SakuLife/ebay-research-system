@@ -29,15 +29,14 @@ class EbayClient:
         if self.use_sandbox:
             self.oauth_url = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
             self.browse_url = "https://api.sandbox.ebay.com/buy/browse/v1"
+            self.insights_url = "https://api.sandbox.ebay.com/buy/marketplace_insights/v1_beta"
         else:
             self.oauth_url = "https://api.ebay.com/identity/v1/oauth2/token"
             self.browse_url = "https://api.ebay.com/buy/browse/v1"
-
-        # Finding API ALWAYS uses production (sandbox has no data)
-        # It only requires APP-ID auth, not OAuth
-        self.finding_url = "https://svcs.ebay.com/services/search/FindingService/v1"
+            self.insights_url = "https://api.ebay.com/buy/marketplace_insights/v1_beta"
 
         self._access_token: Optional[str] = None
+        self._insights_token: Optional[str] = None  # Separate token for Insights API
 
     def _get_access_token(self) -> str:
         """Get OAuth access token using Client Credentials grant."""
@@ -63,6 +62,121 @@ class EbayClient:
 
         self._access_token = response.json()["access_token"]
         return self._access_token
+
+    def _get_insights_token(self) -> str:
+        """Get OAuth access token with Marketplace Insights scope."""
+        if self._insights_token:
+            return self._insights_token
+
+        credentials = f"{self.client_id}:{self.client_secret}"
+        b64_credentials = base64.b64encode(credentials.encode()).decode()
+
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {b64_credentials}"
+        }
+
+        data = {
+            "grant_type": "client_credentials",
+            "scope": "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
+        }
+
+        response = requests.post(self.oauth_url, headers=headers, data=data)
+        response.raise_for_status()
+
+        self._insights_token = response.json()["access_token"]
+        return self._insights_token
+
+    def search_sold_items(self, keyword: str, market: str = "UK", min_sold: int = 1) -> List[ListingCandidate]:
+        """
+        Search sold items using Marketplace Insights API.
+
+        Args:
+            keyword: Search keyword
+            market: Market (UK, US, EU)
+            min_sold: Minimum sold quantity to filter
+
+        Returns:
+            List of ListingCandidate with sold items data
+        """
+        try:
+            token = self._get_insights_token()
+        except Exception as e:
+            print(f"  [WARN] Marketplace Insights API not available: {e}")
+            return []
+
+        # Market to Marketplace ID mapping
+        marketplace_map = {
+            "UK": "EBAY_GB",
+            "US": "EBAY_US",
+            "EU": "EBAY_DE"
+        }
+        marketplace_id = marketplace_map.get(market, "EBAY_GB")
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-EBAY-C-MARKETPLACE-ID": marketplace_id
+        }
+
+        params = {
+            "q": keyword,
+            "limit": 50,
+        }
+
+        url = f"{self.insights_url}/item_sales/search"
+
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+
+            if response.status_code == 403:
+                print(f"  [WARN] Marketplace Insights API access denied (Limited Release API)")
+                return []
+
+            if response.status_code != 200:
+                print(f"  [ERROR] Insights API error {response.status_code}: {response.text[:200]}")
+                return []
+
+            data = response.json()
+            items = data.get("itemSales", [])
+
+            if not items:
+                print(f"  [INFO] No sold items found for '{keyword}'")
+                return []
+
+            candidates = []
+            for item in items:
+                try:
+                    total_sold = item.get("totalSoldQuantity", 0)
+
+                    # Filter by minimum sold quantity
+                    if total_sold < min_sold:
+                        continue
+
+                    last_sold_price = item.get("lastSoldPrice", {})
+                    price = float(last_sold_price.get("value", 0))
+
+                    item_href = item.get("itemHref", "")
+                    title = item.get("title", "")
+
+                    candidate = ListingCandidate(
+                        candidate_id=str(uuid.uuid4()),
+                        search_query=keyword,
+                        ebay_item_url=item_href,
+                        ebay_price=price,
+                        ebay_shipping=0,
+                        sold_signal=total_sold,
+                    )
+                    candidates.append(candidate)
+
+                except (KeyError, ValueError, TypeError) as e:
+                    continue
+
+            print(f"  [INFO] Found {len(candidates)} sold items (sold >= {min_sold}) for '{keyword}'")
+            return candidates
+
+        except requests.exceptions.RequestException as e:
+            print(f"  [ERROR] Insights API network error: {e}")
+            return []
 
     def _extract_item_id(self, url: str) -> Optional[str]:
         """Extract eBay item ID from URL."""

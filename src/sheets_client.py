@@ -221,52 +221,6 @@ class GoogleSheetsClient:
             print(f"  [ERROR] Please create the settings sheet first.")
             return []
 
-    def read_keywords_with_category(self) -> List[Dict[str, str]]:
-        """
-        Read keywords with their categories from settings sheet.
-
-        Returns:
-            List of dicts: [{"keyword": "Pokemon Japanese", "category": "pokemon"}, ...]
-        """
-        try:
-            worksheet = self.spreadsheet.worksheet("設定＆キーワード")
-
-            # Get all values from columns E-G (starting from row 4)
-            all_values = worksheet.get("E4:G100")
-
-            if not all_values:
-                return []
-
-            results = []
-            for row in all_values:
-                # E column: main keyword
-                main_kw = row[0].strip() if len(row) > 0 and row[0] else ""
-
-                # Skip empty rows and section headers
-                if not main_kw or main_kw.startswith('【'):
-                    continue
-
-                # F column: modifier
-                modifier = row[1].strip() if len(row) > 1 and row[1] else ""
-
-                # G column: category
-                category = row[2].strip() if len(row) > 2 and row[2] else "default"
-
-                # Combine keyword
-                if modifier:
-                    combined = f"{main_kw} {modifier}"
-                else:
-                    combined = main_kw
-
-                results.append({
-                    "keyword": combined,
-                    "category": category
-                })
-
-            return results
-
-        except gspread.WorksheetNotFound:
-            return []
 
 
 class LocalSheetsClient:

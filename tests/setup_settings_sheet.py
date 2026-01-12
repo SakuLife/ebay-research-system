@@ -84,22 +84,22 @@ print("Setting up right side (Keywords)...")
 
 right_header = [
     # Row 1: Header
-    ["キーワード", "修飾語", "カテゴリ"],
+    ["キーワード", "修飾語"],
     # Row 2: Empty
-    ["", "", ""],
+    ["", ""],
     # Row 3: Section header
-    ["【キーワード一覧】", "", ""],
+    ["【キーワード一覧】", ""],
 ]
 
-# Keyword examples with category
+# Keyword examples
 keyword_examples = [
-    ["Yu-Gi-Oh", "Limited", "trading_cards"],
-    ["Gundam", "Vintage", "gundam"],
-    ["Pokemon", "Japanese", "pokemon"],
-    ["Hello Kitty", "Rare", "hello_kitty"],
-    ["Shiseido", "", "cosmetic"],
-    ["Japanese knife", "", "knife"],
-    ["Senka", "perfect whip", "cosmetic"],
+    ["Yu-Gi-Oh", "Limited"],
+    ["Gundam", "Vintage"],
+    ["Pokemon", "Japanese"],
+    ["Hello Kitty", "Rare"],
+    ["Shiseido", ""],
+    ["Japanese knife", ""],
+    ["Senka", "perfect whip"],
 ]
 
 # Write left side (A1:C11)
@@ -121,15 +121,15 @@ worksheet.format("A1:C1", {
     "horizontalAlignment": "CENTER"
 })
 
-# Right header (E1:G1) - Green
-worksheet.format("E1:G1", {
+# Right header (E1:F1) - Green
+worksheet.format("E1:F1", {
     "backgroundColor": {"red": 0.2, "green": 0.6, "blue": 0.3},
     "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
     "horizontalAlignment": "CENTER"
 })
 
 # Section headers - Gray
-for row in ["A3:C3", "A9:C9", "E3:G3"]:
+for row in ["A3:C3", "A9:C9", "E3:F3"]:
     worksheet.format(row, {
         "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
         "textFormat": {"bold": True},
@@ -210,17 +210,6 @@ if HAS_FORMATTING:
         )
         set_data_validation_for_cell_range(worksheet, 'B12', rule_size)
 
-        # Category dropdown for keywords (G4:G20)
-        categories = [
-            'trading_cards', 'pokemon', 'gundam', 'figure', 'model_kit',
-            'cosmetic', 'knife', 'hello_kitty', 'default'
-        ]
-        rule_category = DataValidationRule(
-            BooleanCondition('ONE_OF_LIST', categories),
-            showCustomUi=True
-        )
-        set_data_validation_for_cell_range(worksheet, 'G4:G20', rule_category)
-
         print("  Dropdowns set successfully!")
     except Exception as e:
         print(f"  (Could not set data validation: {e})")
@@ -239,7 +228,7 @@ worksheet.format("A1:C12", {
     }
 })
 # Right side borders
-worksheet.format("E1:G20", {
+worksheet.format("E1:F20", {
     "borders": {
         "top": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
         "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},

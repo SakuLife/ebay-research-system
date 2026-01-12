@@ -151,22 +151,19 @@ def main():
     print(f"  [INFO] Weight: {default_weight}, Packaging: {packaging_weight_g}g, Size: x{size_multiplier}")
 
     print(f"\n[2/6] Reading keywords from '設定＆キーワード' sheet...")
-    keywords_with_category = sheets_client.read_keywords_with_category()
+    keywords = sheets_client.read_keywords_from_settings()
 
-    if not keywords_with_category:
+    if not keywords:
         print(f"  [ERROR] No keywords found in '設定＆キーワード' sheet!")
         sys.exit(1)
 
-    keywords = [kw["keyword"] for kw in keywords_with_category]
     print(f"  [INFO] Keywords: {', '.join(keywords)}")
 
     # Step 2-5: Process each keyword
     total_processed = 0
     total_profitable = 0
 
-    for kw_data in keywords_with_category:
-        keyword = kw_data["keyword"]
-        category = kw_data["category"]
+    for keyword in keywords:
         print(f"\n{'='*60}")
         print(f"Processing keyword: {keyword}")
         print(f"{'='*60}")
@@ -230,10 +227,11 @@ def main():
             # Step 5: Calculate profit (with weight estimation)
             print(f"\n[5/5] Calculating profit...")
 
-            # Estimate weight based on category (from settings) and price
+            # Estimate weight based on keyword and price
+            # TODO: Replace with Gemini API for smarter estimation
             # Formula: volumetric weight = L x W x H / 5000
             # Applied weight = max(actual, volumetric)
-            weight_est = estimate_weight_from_price(ebay_price, category)
+            weight_est = estimate_weight_from_price(ebay_price, keyword.split()[0].lower())
 
             # Apply size multiplier from settings
             adjusted_depth = weight_est.depth_cm * size_multiplier
@@ -243,7 +241,6 @@ def main():
             # Apply packaging weight from settings (override default)
             adjusted_weight_g = weight_est.actual_weight_g - 500 + packaging_weight_g  # Replace default 500g
 
-            print(f"  [INFO] Category: {category}")
             print(f"  [INFO] Weight estimate: {adjusted_weight_g}g (packaging: {packaging_weight_g}g)")
             print(f"  [INFO] Dimensions: {adjusted_depth:.1f}x{adjusted_width:.1f}x{adjusted_height:.1f}cm (x{size_multiplier})")
 

@@ -327,6 +327,11 @@ def main():
 
             print(f"  [SUCCESS] Result written to row {row_num}")
 
+            # Rate limit protection: wait 2 seconds between items
+            # Google Sheets API limit is 60 writes/minute
+            import time
+            time.sleep(2)
+
     # Summary
     print(f"\n{'='*60}")
     print(f"AUTO RESEARCH COMPLETED")

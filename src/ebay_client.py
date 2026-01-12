@@ -311,7 +311,7 @@ class EbayClient:
                 return []
 
             candidates = []
-            for item in items[:20]:  # Limit to top 20 items
+            for item in items[:50]:  # Check more items to find enough above min_price
                 try:
                     item_id = item.get("itemId", "")
                     title = item.get("title", "")
@@ -320,6 +320,10 @@ class EbayClient:
                     # Get price
                     price_info = item.get("price", {})
                     price = float(price_info.get("value", 0))
+
+                    # Code-level price filter (API filter may not work due to currency)
+                    if min_price_usd > 0 and price < min_price_usd:
+                        continue  # Skip items below min price
 
                     # Get shipping cost (if available)
                     shipping_options = item.get("shippingOptions", [])
@@ -332,6 +336,14 @@ class EbayClient:
                     # Browse API doesn't directly provide sold count, so we use 1 as default
                     sold_signal = 1
 
+                    # Get category info
+                    categories = item.get("categories", [])
+                    category_id = ""
+                    category_name = ""
+                    if categories:
+                        category_id = categories[0].get("categoryId", "")
+                        category_name = categories[0].get("categoryName", "")
+
                     candidate = ListingCandidate(
                         candidate_id=str(uuid.uuid4()),
                         search_query=keyword,
@@ -339,8 +351,14 @@ class EbayClient:
                         ebay_price=price,
                         ebay_shipping=shipping_cost,
                         sold_signal=sold_signal,
+                        category_id=category_id,
+                        category_name=category_name,
                     )
                     candidates.append(candidate)
+
+                    # Stop after finding 20 valid items
+                    if len(candidates) >= 20:
+                        break
 
                 except (KeyError, ValueError, TypeError) as e:
                     print(f"  [WARN] Failed to parse item: {e}")

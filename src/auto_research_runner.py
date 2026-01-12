@@ -197,9 +197,13 @@ def main():
             ebay_url = item.ebay_item_url
             ebay_price = item.ebay_price
             ebay_shipping = item.ebay_shipping
+            category_id = getattr(item, 'category_id', '') or ''
+            category_name = getattr(item, 'category_name', '') or ''
 
             print(f"\n  Processing: {ebay_url}")
             print(f"  [INFO] eBay price: ${ebay_price} + ${ebay_shipping} shipping")
+            if category_name:
+                print(f"  [INFO] Category: {category_name} ({category_id})")
 
             # Step 4: Search domestic sources (Rakuten + Amazon)
             print(f"\n[4/5] Searching domestic sources...")
@@ -307,8 +311,8 @@ def main():
                 "profit_margin_no_rebate": profit_margin_no_rebate,
                 "profit_with_rebate": profit_with_rebate,
                 "profit_margin_with_rebate": profit_margin_with_rebate,
-                "category_name": "",
-                "category_id": ""
+                "category_name": category_name,
+                "category_id": category_id
             }
 
             row_num = write_result_to_spreadsheet(sheets_client, result_data)

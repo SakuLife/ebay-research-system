@@ -13,6 +13,8 @@ class ListingCandidate:
     ebay_price: float
     ebay_shipping: float
     sold_signal: int
+    category_id: str = ""
+    category_name: str = ""
 
 
 @dataclass

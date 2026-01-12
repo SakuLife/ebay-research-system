@@ -270,12 +270,15 @@ class EbayClient:
             "X-EBAY-C-MARKETPLACE-ID": marketplace_id
         }
 
-        # Search for active listings, sorted by best match (popular items first)
+        # Search for active listings
+        # Filters: Fixed Price only, New condition
+        # Sort: Price ascending (lowest first)
+        # Note: Browse API doesn't have "price + shipping" sort option
         params = {
             "q": keyword,
-            "sort": "price",  # Sort by price to find competitive pricing
-            "limit": 50,  # Get more items to analyze
-            "filter": "buyingOptions:{FIXED_PRICE}"  # Only Buy It Now items
+            "sort": "price",  # Sort by price ascending (lowest first)
+            "limit": 50,
+            "filter": "buyingOptions:{FIXED_PRICE},conditionIds:{1000}"  # Fixed Price + New only
         }
 
         url = f"{self.browse_url}/item_summary/search"

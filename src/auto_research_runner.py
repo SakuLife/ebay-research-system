@@ -16,6 +16,7 @@ from .sheets_client import GoogleSheetsClient
 from .spreadsheet_mapping import INPUT_SHEET_COLUMNS
 from .search_base_client import SearchBaseClient
 from .config_loader import load_all_configs
+from .weight_estimator import estimate_weight_from_price
 
 
 def get_next_empty_row(sheet_client) -> int:
@@ -207,8 +208,15 @@ def main():
             print(f"  [INFO] Best source: {best_source.source_site} - JPY {total_source_price}")
             print(f"  [INFO] URL: {best_source.source_url}")
 
-            # Step 5: Calculate profit
+            # Step 5: Calculate profit (with weight estimation)
             print(f"\n[5/5] Calculating profit...")
+
+            # Estimate weight based on keyword and price
+            # Formula: volumetric weight = L x W x H / 5000
+            # Applied weight = max(actual, volumetric)
+            weight_est = estimate_weight_from_price(ebay_price, keyword.split()[0])
+            print(f"  [INFO] Weight estimate: {weight_est.applied_weight_g}g ({weight_est.estimation_basis})")
+            print(f"  [INFO] Dimensions: {weight_est.depth_cm}x{weight_est.width_cm}x{weight_est.height_cm}cm")
 
             try:
                 # Use search base client for accurate calculation
@@ -216,7 +224,11 @@ def main():
                     source_price_jpy=total_source_price,
                     ebay_price_usd=ebay_price,
                     ebay_shipping_usd=ebay_shipping,
-                    ebay_url=ebay_url
+                    ebay_url=ebay_url,
+                    weight_g=weight_est.actual_weight_g,
+                    depth_cm=weight_est.depth_cm,
+                    width_cm=weight_est.width_cm,
+                    height_cm=weight_est.height_cm
                 )
 
                 calc_result = search_base_client.read_calculation_results(max_wait_seconds=5)

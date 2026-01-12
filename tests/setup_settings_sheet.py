@@ -62,15 +62,16 @@ left_data = [
     ["", "", ""],
     # Row 3: Section header
     ["【基本設定】", "", ""],
-    # Row 4-6: Basic settings
+    # Row 4-7: Basic settings
     ["検索市場", "UK", "eBay検索対象（UK/US/EU）"],
     ["検索期間", "90日", "販売実績期間"],
+    ["最低価格($)", "100", "eBay検索の最低価格（ドル）"],
     ["最低利益額", "フィルターなし", "出力する最低利益"],
-    # Row 7: Empty
+    # Row 8: Empty
     ["", "", ""],
-    # Row 8: Section header
+    # Row 9: Section header
     ["【重量設定】", "", ""],
-    # Row 9-11: Weight settings
+    # Row 10-12: Weight settings
     ["デフォルト重量", "自動推定", "カテゴリ別自動 or 固定値(g)"],
     ["梱包追加重量", "500", "梱包材の重量(g)"],
     ["サイズ倍率", "1.0", "大型商品は1.5など"],
@@ -128,15 +129,15 @@ worksheet.format("E1:G1", {
 })
 
 # Section headers - Gray
-for row in ["A3:C3", "A8:C8", "E3:G3"]:
+for row in ["A3:C3", "A9:C9", "E3:G3"]:
     worksheet.format(row, {
         "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
         "textFormat": {"bold": True},
     })
 
 # Settings labels - Bold
-worksheet.format("A4:A6", {"textFormat": {"bold": True}})
-worksheet.format("A9:A11", {"textFormat": {"bold": True}})
+worksheet.format("A4:A7", {"textFormat": {"bold": True}})
+worksheet.format("A10:A12", {"textFormat": {"bold": True}})
 
 # Set column widths
 print("Setting column widths...")
@@ -174,33 +175,40 @@ if HAS_FORMATTING:
         )
         set_data_validation_for_cell_range(worksheet, 'B5', rule_period)
 
-        # Minimum profit dropdown (B6)
+        # Minimum price dropdown (B6) - NEW
+        rule_min_price = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', ['0', '30', '50', '100', '150', '200']),
+            showCustomUi=True
+        )
+        set_data_validation_for_cell_range(worksheet, 'B6', rule_min_price)
+
+        # Minimum profit dropdown (B7)
         rule_profit = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['フィルターなし', '500円', '1000円', '2000円', '3000円', '5000円']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B6', rule_profit)
+        set_data_validation_for_cell_range(worksheet, 'B7', rule_profit)
 
-        # Default weight dropdown (B9)
+        # Default weight dropdown (B10)
         rule_weight = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['自動推定', '500', '1000', '1500', '2000', '3000']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B9', rule_weight)
+        set_data_validation_for_cell_range(worksheet, 'B10', rule_weight)
 
-        # Packaging weight dropdown (B10)
+        # Packaging weight dropdown (B11)
         rule_packaging = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['300', '500', '800', '1000', '1500', '2000']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B10', rule_packaging)
+        set_data_validation_for_cell_range(worksheet, 'B11', rule_packaging)
 
-        # Size multiplier dropdown (B11)
+        # Size multiplier dropdown (B12)
         rule_size = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['0.8', '1.0', '1.25', '1.5', '2.0']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B11', rule_size)
+        set_data_validation_for_cell_range(worksheet, 'B12', rule_size)
 
         # Category dropdown for keywords (G4:G20)
         categories = [
@@ -222,7 +230,7 @@ else:
 # Add borders
 print("Adding borders...")
 # Left side borders
-worksheet.format("A1:C11", {
+worksheet.format("A1:C12", {
     "borders": {
         "top": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
         "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},

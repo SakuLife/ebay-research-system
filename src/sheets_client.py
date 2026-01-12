@@ -139,19 +139,21 @@ class GoogleSheetsClient:
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
 
-            # Basic settings (B4-B6)
+            # Basic settings (B4-B7)
             market = worksheet.acell('B4').value or "UK"
             period = worksheet.acell('B5').value or "90日"
-            min_profit = worksheet.acell('B6').value or "フィルターなし"
+            min_price = worksheet.acell('B6').value or "100"
+            min_profit = worksheet.acell('B7').value or "フィルターなし"
 
-            # Weight settings (B9-B11)
-            default_weight = worksheet.acell('B9').value or "自動推定"
-            packaging_weight = worksheet.acell('B10').value or "500"
-            size_multiplier = worksheet.acell('B11').value or "1.0"
+            # Weight settings (B10-B12)
+            default_weight = worksheet.acell('B10').value or "自動推定"
+            packaging_weight = worksheet.acell('B11').value or "500"
+            size_multiplier = worksheet.acell('B12').value or "1.0"
 
             return {
                 "market": market,
                 "period": period,
+                "min_price": min_price,
                 "min_profit": min_profit,
                 "default_weight": default_weight,
                 "packaging_weight": packaging_weight,
@@ -162,6 +164,7 @@ class GoogleSheetsClient:
             return {
                 "market": "UK",
                 "period": "90日",
+                "min_price": "100",
                 "min_profit": "フィルターなし",
                 "default_weight": "自動推定",
                 "packaging_weight": "500",

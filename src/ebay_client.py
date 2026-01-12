@@ -241,7 +241,7 @@ class EbayClient:
                 print(f"  [INFO] Item {item_id} not found (may be sold/removed)")
             return None
 
-    def search_active_listings(self, keyword: str, market: str = "UK") -> List[ListingCandidate]:
+    def search_active_listings(self, keyword: str, market: str = "UK", min_price_usd: float = 0) -> List[ListingCandidate]:
         """
         Search active listings using eBay Browse API.
 
@@ -271,14 +271,21 @@ class EbayClient:
         }
 
         # Search for active listings
-        # Filters: Fixed Price only, New condition
+        # Filters: Fixed Price only, New condition, optional min price
         # Sort: Price ascending (lowest first)
         # Note: Browse API doesn't have "price + shipping" sort option
+        filter_parts = ["buyingOptions:{FIXED_PRICE}", "conditionIds:{1000}"]
+
+        # Add minimum price filter if specified
+        if min_price_usd > 0:
+            filter_parts.append(f"price:[{min_price_usd}..]")
+            print(f"  [INFO] Price filter: ${min_price_usd}+")
+
         params = {
             "q": keyword,
             "sort": "price",  # Sort by price ascending (lowest first)
             "limit": 50,
-            "filter": "buyingOptions:{FIXED_PRICE},conditionIds:{1000}"  # Fixed Price + New only
+            "filter": ",".join(filter_parts)
         }
 
         url = f"{self.browse_url}/item_summary/search"

@@ -124,6 +124,7 @@ def main():
     settings = sheets_client.read_settings()
 
     market = settings.get("market", "UK")
+    min_price_str = settings.get("min_price", "100")
     min_profit_str = settings.get("min_profit", "フィルターなし")
 
     # Weight settings
@@ -132,18 +133,20 @@ def main():
     size_multiplier_str = settings.get("size_multiplier", "1.0")
 
     # Parse values
+    min_price_usd = float(min_price_str) if min_price_str.replace(".", "").isdigit() else 100.0
     packaging_weight_g = int(packaging_weight_str) if packaging_weight_str.isdigit() else 500
     size_multiplier = float(size_multiplier_str) if size_multiplier_str else 1.0
+
+    print(f"  [INFO] Market: {market}")
+    print(f"  [INFO] Min price: ${min_price_usd}")
 
     # Parse min_profit (handle "フィルターなし" = no filter)
     if min_profit_str == "フィルターなし" or not min_profit_str:
         min_profit_jpy = None  # No filter
-        print(f"  [INFO] Market: {market}")
-        print(f"  [INFO] Minimum profit: フィルターなし（全件出力）")
+        print(f"  [INFO] Min profit: フィルターなし（全件出力）")
     else:
         min_profit_jpy = int(min_profit_str.replace("円", "").replace(",", ""))
-        print(f"  [INFO] Market: {market}")
-        print(f"  [INFO] Minimum profit: JPY {min_profit_jpy}")
+        print(f"  [INFO] Min profit: JPY {min_profit_jpy}")
 
     print(f"  [INFO] Weight: {default_weight}, Packaging: {packaging_weight_g}g, Size: x{size_multiplier}")
 
@@ -171,18 +174,20 @@ def main():
         # Step 3: Search eBay listings
         # Try Marketplace Insights API first (sold items with sold count)
         # Fall back to Browse API if Insights API is not available
-        print(f"\n[3/5] Searching eBay listings...")
+        print(f"\n[3/5] Searching eBay listings (${min_price_usd}+)...")
 
         # Try Marketplace Insights API first (requires Limited Release access)
         sold_items = ebay_client.search_sold_items(keyword, market=market, min_sold=2)
 
         if sold_items:
+            # Filter by min_price manually (Insights API doesn't support price filter)
+            sold_items = [item for item in sold_items if item.ebay_price >= min_price_usd]
             print(f"  [INFO] Using Marketplace Insights API (sold items)")
             active_items = sold_items
         else:
-            # Fall back to Browse API (active listings)
+            # Fall back to Browse API (active listings) with price filter
             print(f"  [INFO] Falling back to Browse API (active listings)")
-            active_items = ebay_client.search_active_listings(keyword, market=market)
+            active_items = ebay_client.search_active_listings(keyword, market=market, min_price_usd=min_price_usd)
 
         if not active_items:
             print(f"  [WARN] No eBay listings found for '{keyword}'")

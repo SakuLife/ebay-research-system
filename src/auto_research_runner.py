@@ -126,6 +126,15 @@ def main():
     market = settings.get("market", "UK")
     min_profit_str = settings.get("min_profit", "フィルターなし")
 
+    # Weight settings
+    default_weight = settings.get("default_weight", "自動推定")
+    packaging_weight_str = settings.get("packaging_weight", "500")
+    size_multiplier_str = settings.get("size_multiplier", "1.0")
+
+    # Parse values
+    packaging_weight_g = int(packaging_weight_str) if packaging_weight_str.isdigit() else 500
+    size_multiplier = float(size_multiplier_str) if size_multiplier_str else 1.0
+
     # Parse min_profit (handle "フィルターなし" = no filter)
     if min_profit_str == "フィルターなし" or not min_profit_str:
         min_profit_jpy = None  # No filter
@@ -136,20 +145,25 @@ def main():
         print(f"  [INFO] Market: {market}")
         print(f"  [INFO] Minimum profit: JPY {min_profit_jpy}")
 
-    print(f"\n[2/6] Reading keywords from '設定＆キーワード' sheet...")
-    keywords = sheets_client.read_keywords_from_settings()
+    print(f"  [INFO] Weight: {default_weight}, Packaging: {packaging_weight_g}g, Size: x{size_multiplier}")
 
-    if not keywords:
+    print(f"\n[2/6] Reading keywords from '設定＆キーワード' sheet...")
+    keywords_with_category = sheets_client.read_keywords_with_category()
+
+    if not keywords_with_category:
         print(f"  [ERROR] No keywords found in '設定＆キーワード' sheet!")
         sys.exit(1)
 
+    keywords = [kw["keyword"] for kw in keywords_with_category]
     print(f"  [INFO] Keywords: {', '.join(keywords)}")
 
     # Step 2-5: Process each keyword
     total_processed = 0
     total_profitable = 0
 
-    for keyword in keywords:
+    for kw_data in keywords_with_category:
+        keyword = kw_data["keyword"]
+        category = kw_data["category"]
         print(f"\n{'='*60}")
         print(f"Processing keyword: {keyword}")
         print(f"{'='*60}")
@@ -211,12 +225,22 @@ def main():
             # Step 5: Calculate profit (with weight estimation)
             print(f"\n[5/5] Calculating profit...")
 
-            # Estimate weight based on keyword and price
+            # Estimate weight based on category (from settings) and price
             # Formula: volumetric weight = L x W x H / 5000
             # Applied weight = max(actual, volumetric)
-            weight_est = estimate_weight_from_price(ebay_price, keyword.split()[0])
-            print(f"  [INFO] Weight estimate: {weight_est.applied_weight_g}g ({weight_est.estimation_basis})")
-            print(f"  [INFO] Dimensions: {weight_est.depth_cm}x{weight_est.width_cm}x{weight_est.height_cm}cm")
+            weight_est = estimate_weight_from_price(ebay_price, category)
+
+            # Apply size multiplier from settings
+            adjusted_depth = weight_est.depth_cm * size_multiplier
+            adjusted_width = weight_est.width_cm * size_multiplier
+            adjusted_height = weight_est.height_cm * size_multiplier
+
+            # Apply packaging weight from settings (override default)
+            adjusted_weight_g = weight_est.actual_weight_g - 500 + packaging_weight_g  # Replace default 500g
+
+            print(f"  [INFO] Category: {category}")
+            print(f"  [INFO] Weight estimate: {adjusted_weight_g}g (packaging: {packaging_weight_g}g)")
+            print(f"  [INFO] Dimensions: {adjusted_depth:.1f}x{adjusted_width:.1f}x{adjusted_height:.1f}cm (x{size_multiplier})")
 
             try:
                 # Use search base client for accurate calculation
@@ -225,10 +249,10 @@ def main():
                     ebay_price_usd=ebay_price,
                     ebay_shipping_usd=ebay_shipping,
                     ebay_url=ebay_url,
-                    weight_g=weight_est.actual_weight_g,
-                    depth_cm=weight_est.depth_cm,
-                    width_cm=weight_est.width_cm,
-                    height_cm=weight_est.height_cm
+                    weight_g=adjusted_weight_g,
+                    depth_cm=adjusted_depth,
+                    width_cm=adjusted_width,
+                    height_cm=adjusted_height
                 )
 
                 calc_result = search_base_client.read_calculation_results(max_wait_seconds=5)

@@ -1,4 +1,9 @@
-"""Setup settings sheet with examples and nice UI."""
+"""Setup settings sheet with examples and nice UI.
+
+Layout:
+  A-C列: 基本設定・重量設定
+  E-G列: キーワード設定（カテゴリ付き）
+"""
 
 import os
 from pathlib import Path
@@ -45,80 +50,110 @@ except:
 # Clear existing content
 worksheet.clear()
 
-# Setup headers with nice formatting
-print("Setting up headers...")
-headers = [
+# ============================================================
+# LEFT SIDE: Settings (A-C columns)
+# ============================================================
+print("Setting up left side (Settings)...")
+
+left_data = [
+    # Row 1: Header
     ["設定項目", "値", "説明"],
-]
-
-# Settings section
-settings_data = [
-    ["", "", ""],  # Empty row
+    # Row 2: Empty
+    ["", "", ""],
+    # Row 3: Section header
     ["【基本設定】", "", ""],
-    ["検索市場", "UK", "eBay検索対象市場（UK/US/EU）"],
-    ["検索期間", "90日", "販売実績の検索期間（30日/60日/90日）"],
-    ["最低利益額", "フィルターなし", "候補として抽出する最低利益額（フィルターなし=全件出力）"],
-    ["", "", ""],  # Empty row
-    ["【キーワード設定】", "", ""],
-    ["キーワード", "修飾語", "A列+B列で組み合わせて検索"],
+    # Row 4-6: Basic settings
+    ["検索市場", "UK", "eBay検索対象（UK/US/EU）"],
+    ["検索期間", "90日", "販売実績期間"],
+    ["最低利益額", "フィルターなし", "出力する最低利益"],
+    # Row 7: Empty
+    ["", "", ""],
+    # Row 8: Section header
+    ["【重量設定】", "", ""],
+    # Row 9-11: Weight settings
+    ["デフォルト重量", "自動推定", "カテゴリ別自動 or 固定値(g)"],
+    ["梱包追加重量", "500", "梱包材の重量(g)"],
+    ["サイズ倍率", "1.0", "大型商品は1.5など"],
 ]
 
-# Keyword examples (2-column format: Main keyword + Modifier)
+# ============================================================
+# RIGHT SIDE: Keywords (E-G columns)
+# ============================================================
+print("Setting up right side (Keywords)...")
+
+right_header = [
+    # Row 1: Header
+    ["キーワード", "修飾語", "カテゴリ"],
+    # Row 2: Empty
+    ["", "", ""],
+    # Row 3: Section header
+    ["【キーワード一覧】", "", ""],
+]
+
+# Keyword examples with category
 keyword_examples = [
-    ["Yu-Gi-Oh", "Limited"],
-    ["Gundam", "Vintage"],
-    ["Pokemon", "Japanese"],
-    ["Hello Kitty", "Rare"],
-    ["Shiseido", ""],
-    ["Japanese knife", ""],
-    ["Senka", "perfect whip"],
+    ["Yu-Gi-Oh", "Limited", "trading_cards"],
+    ["Gundam", "Vintage", "gundam"],
+    ["Pokemon", "Japanese", "pokemon"],
+    ["Hello Kitty", "Rare", "hello_kitty"],
+    ["Shiseido", "", "cosmetic"],
+    ["Japanese knife", "", "knife"],
+    ["Senka", "perfect whip", "cosmetic"],
 ]
 
-# Combine all data
-all_data = headers + settings_data + keyword_examples
+# Write left side (A1:C11)
+worksheet.update(range_name="A1", values=left_data)
 
-# Write all data at once
-worksheet.update(range_name="A1", values=all_data)
+# Write right side (E1:G3 headers, E4:G10 keywords)
+worksheet.update(range_name="E1", values=right_header)
+worksheet.update(range_name="E4", values=keyword_examples)
 
-# Format headers (Row 1)
-print("Formatting headers...")
+# ============================================================
+# Formatting
+# ============================================================
+print("Applying formatting...")
+
+# Left header (A1:C1) - Blue
 worksheet.format("A1:C1", {
     "backgroundColor": {"red": 0.2, "green": 0.4, "blue": 0.8},
     "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
     "horizontalAlignment": "CENTER"
 })
 
-# Format section headers (【基本設定】, 【キーワード設定】)
-print("Formatting section headers...")
-worksheet.format("A3:C3", {
-    "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
-    "textFormat": {"bold": True},
-})
-worksheet.format("A8:C8", {
-    "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
-    "textFormat": {"bold": True},
+# Right header (E1:G1) - Green
+worksheet.format("E1:G1", {
+    "backgroundColor": {"red": 0.2, "green": 0.6, "blue": 0.3},
+    "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+    "horizontalAlignment": "CENTER"
 })
 
-# Format settings labels
-worksheet.format("A4:A6", {
-    "textFormat": {"bold": True},
-})
-worksheet.format("A9", {
-    "textFormat": {"bold": True},
-})
+# Section headers - Gray
+for row in ["A3:C3", "A8:C8", "E3:G3"]:
+    worksheet.format(row, {
+        "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
+        "textFormat": {"bold": True},
+    })
+
+# Settings labels - Bold
+worksheet.format("A4:A6", {"textFormat": {"bold": True}})
+worksheet.format("A9:A11", {"textFormat": {"bold": True}})
 
 # Set column widths
 print("Setting column widths...")
 try:
-    worksheet.set_column_width('A', 200)
-    worksheet.set_column_width('B', 150)
-    worksheet.set_column_width('C', 300)
+    worksheet.set_column_width('A', 150)
+    worksheet.set_column_width('B', 120)
+    worksheet.set_column_width('C', 200)
+    worksheet.set_column_width('D', 30)  # Gap column
+    worksheet.set_column_width('E', 150)
+    worksheet.set_column_width('F', 120)
+    worksheet.set_column_width('G', 120)
 except AttributeError:
-    # Older gspread version - use format instead
     print("  (Using alternative method for column widths)")
-    pass
 
-# Add data validation (dropdowns)
+# ============================================================
+# Data Validation (Dropdowns)
+# ============================================================
 print("Adding data validation...")
 
 if HAS_FORMATTING:
@@ -141,10 +176,43 @@ if HAS_FORMATTING:
 
         # Minimum profit dropdown (B6)
         rule_profit = DataValidationRule(
-            BooleanCondition('ONE_OF_LIST', ['フィルターなし', '1円', '500円', '1000円', '2000円', '3000円', '5000円']),
+            BooleanCondition('ONE_OF_LIST', ['フィルターなし', '500円', '1000円', '2000円', '3000円', '5000円']),
             showCustomUi=True
         )
         set_data_validation_for_cell_range(worksheet, 'B6', rule_profit)
+
+        # Default weight dropdown (B9)
+        rule_weight = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', ['自動推定', '500', '1000', '1500', '2000', '3000']),
+            showCustomUi=True
+        )
+        set_data_validation_for_cell_range(worksheet, 'B9', rule_weight)
+
+        # Packaging weight dropdown (B10)
+        rule_packaging = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', ['300', '500', '800', '1000', '1500', '2000']),
+            showCustomUi=True
+        )
+        set_data_validation_for_cell_range(worksheet, 'B10', rule_packaging)
+
+        # Size multiplier dropdown (B11)
+        rule_size = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', ['0.8', '1.0', '1.25', '1.5', '2.0']),
+            showCustomUi=True
+        )
+        set_data_validation_for_cell_range(worksheet, 'B11', rule_size)
+
+        # Category dropdown for keywords (G4:G20)
+        categories = [
+            'trading_cards', 'pokemon', 'gundam', 'figure', 'model_kit',
+            'cosmetic', 'knife', 'hello_kitty', 'default'
+        ]
+        rule_category = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', categories),
+            showCustomUi=True
+        )
+        set_data_validation_for_cell_range(worksheet, 'G4:G20', rule_category)
+
         print("  Dropdowns set successfully!")
     except Exception as e:
         print(f"  (Could not set data validation: {e})")
@@ -153,7 +221,17 @@ else:
 
 # Add borders
 print("Adding borders...")
-worksheet.format("A1:C16", {
+# Left side borders
+worksheet.format("A1:C11", {
+    "borders": {
+        "top": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+        "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+        "left": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
+        "right": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}}
+    }
+})
+# Right side borders
+worksheet.format("E1:G20", {
     "borders": {
         "top": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
         "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
@@ -166,12 +244,17 @@ worksheet.format("A1:C16", {
 print("Freezing header row...")
 worksheet.freeze(rows=1)
 
-print("\n[SUCCESS] Settings sheet setup complete!")
-print("\nSetup details:")
-print("- Headers formatted with blue background")
-print("- Section headers with gray background")
-if HAS_FORMATTING:
-    print("- Dropdowns added for market, period, and profit margin")
-print("- 7 example keywords added")
-print("- Column widths optimized")
-print("- Borders and freeze applied")
+print("\n" + "=" * 50)
+print("[SUCCESS] Settings sheet setup complete!")
+print("=" * 50)
+print("\nLayout:")
+print("  A-C列: 基本設定・重量設定")
+print("  E-G列: キーワード（カテゴリ付き）")
+print("\nDropdowns:")
+print("  - 検索市場: UK/US/EU")
+print("  - 検索期間: 30日/60日/90日")
+print("  - 最低利益額: フィルターなし〜5000円")
+print("  - デフォルト重量: 自動推定 or 固定値")
+print("  - 梱包追加重量: 300g〜2000g")
+print("  - サイズ倍率: 0.8〜2.0")
+print("  - カテゴリ: trading_cards, pokemon, gundam, etc.")

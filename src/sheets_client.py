@@ -129,61 +129,77 @@ class GoogleSheetsClient:
         """
         Read settings from the '設定＆キーワード' sheet.
 
+        Layout:
+          A-C列: 基本設定（Row 4-6）、重量設定（Row 9-11）
+          E-G列: キーワード（Row 4+）
+
         Returns:
-            Dict with settings: market, period, min_profit
+            Dict with settings: market, period, min_profit, weight settings
         """
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
 
-            # Read settings from B column (rows 4-6)
+            # Basic settings (B4-B6)
             market = worksheet.acell('B4').value or "UK"
             period = worksheet.acell('B5').value or "90日"
-            min_profit = worksheet.acell('B6').value or "1円"
+            min_profit = worksheet.acell('B6').value or "フィルターなし"
+
+            # Weight settings (B9-B11)
+            default_weight = worksheet.acell('B9').value or "自動推定"
+            packaging_weight = worksheet.acell('B10').value or "500"
+            size_multiplier = worksheet.acell('B11').value or "1.0"
 
             return {
                 "market": market,
                 "period": period,
-                "min_profit": min_profit
+                "min_profit": min_profit,
+                "default_weight": default_weight,
+                "packaging_weight": packaging_weight,
+                "size_multiplier": size_multiplier
             }
         except gspread.WorksheetNotFound:
             print(f"  [WARN] '設定＆キーワード' sheet not found. Using defaults.")
             return {
                 "market": "UK",
                 "period": "90日",
-                "min_profit": "1円"
+                "min_profit": "フィルターなし",
+                "default_weight": "自動推定",
+                "packaging_weight": "500",
+                "size_multiplier": "1.0"
             }
 
     def read_keywords_from_settings(self) -> List[str]:
         """
         Read keywords from the '設定＆キーワード' (Settings & Keywords) sheet.
 
-        Combines A列 (main keyword) + B列 (modifier) for search.
-        Example: A="Yu-Gi-Oh", B="Limited" → "Yu-Gi-Oh Limited"
+        New layout: E-G columns (starting from row 4)
+          E列: キーワード
+          F列: 修飾語
+          G列: カテゴリ（重量推定用）
 
         Returns:
-            List of combined keywords (starting from row 10)
+            List of combined keywords "keyword modifier"
         """
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
 
-            # Get all values from columns A and B
-            # Use get() to get a 2D range
-            all_values = worksheet.get("A10:B500")  # Get enough rows
+            # Get all values from columns E-G (starting from row 4)
+            all_values = worksheet.get("E4:G100")
 
             if not all_values:
-                print(f"  [WARN] No keywords found in '設定＆キーワード' sheet")
+                print(f"  [WARN] No keywords found in '設定＆キーワード' sheet (E4:G)")
                 return []
 
             keywords = []
             for row in all_values:
-                # Get A column (main keyword)
+                # E column: main keyword
                 main_kw = row[0].strip() if len(row) > 0 and row[0] else ""
 
                 # Skip empty rows and section headers
                 if not main_kw or main_kw.startswith('【'):
                     continue
 
-                # Get B column (modifier) if exists
+                # F column: modifier
                 modifier = row[1].strip() if len(row) > 1 and row[1] else ""
 
                 # Combine: "main modifier" or just "main"
@@ -200,6 +216,53 @@ class GoogleSheetsClient:
         except gspread.WorksheetNotFound:
             print(f"  [ERROR] '設定＆キーワード' sheet not found!")
             print(f"  [ERROR] Please create the settings sheet first.")
+            return []
+
+    def read_keywords_with_category(self) -> List[Dict[str, str]]:
+        """
+        Read keywords with their categories from settings sheet.
+
+        Returns:
+            List of dicts: [{"keyword": "Pokemon Japanese", "category": "pokemon"}, ...]
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet("設定＆キーワード")
+
+            # Get all values from columns E-G (starting from row 4)
+            all_values = worksheet.get("E4:G100")
+
+            if not all_values:
+                return []
+
+            results = []
+            for row in all_values:
+                # E column: main keyword
+                main_kw = row[0].strip() if len(row) > 0 and row[0] else ""
+
+                # Skip empty rows and section headers
+                if not main_kw or main_kw.startswith('【'):
+                    continue
+
+                # F column: modifier
+                modifier = row[1].strip() if len(row) > 1 and row[1] else ""
+
+                # G column: category
+                category = row[2].strip() if len(row) > 2 and row[2] else "default"
+
+                # Combine keyword
+                if modifier:
+                    combined = f"{main_kw} {modifier}"
+                else:
+                    combined = main_kw
+
+                results.append({
+                    "keyword": combined,
+                    "category": category
+                })
+
+            return results
+
+        except gspread.WorksheetNotFound:
             return []
 
 

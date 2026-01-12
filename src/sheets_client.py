@@ -130,31 +130,33 @@ class GoogleSheetsClient:
         Read settings from the '設定＆キーワード' sheet.
 
         Layout:
-          A-C列: 基本設定（Row 4-6）、重量設定（Row 9-11）
+          A-C列: 基本設定（Row 4-8）、重量設定（Row 10-12）
           E-G列: キーワード（Row 4+）
 
         Returns:
-            Dict with settings: market, period, min_profit, weight settings
+            Dict with settings: market, period, min_profit, weight settings, items_per_keyword
         """
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
 
-            # Basic settings (B4-B7)
+            # Basic settings (B4-B8)
             market = worksheet.acell('B4').value or "UK"
             period = worksheet.acell('B5').value or "90日"
             min_price = worksheet.acell('B6').value or "100"
             min_profit = worksheet.acell('B7').value or "フィルターなし"
+            items_per_keyword = worksheet.acell('B8').value or "5"
 
-            # Weight settings (B10-B12)
-            default_weight = worksheet.acell('B10').value or "自動推定"
-            packaging_weight = worksheet.acell('B11').value or "500"
-            size_multiplier = worksheet.acell('B12').value or "1.0"
+            # Weight settings (B11-B13) - shifted by 1 due to items_per_keyword row
+            default_weight = worksheet.acell('B11').value or "自動推定"
+            packaging_weight = worksheet.acell('B12').value or "500"
+            size_multiplier = worksheet.acell('B13').value or "1.0"
 
             return {
                 "market": market,
                 "period": period,
                 "min_price": min_price,
                 "min_profit": min_profit,
+                "items_per_keyword": items_per_keyword,
                 "default_weight": default_weight,
                 "packaging_weight": packaging_weight,
                 "size_multiplier": size_multiplier
@@ -166,6 +168,7 @@ class GoogleSheetsClient:
                 "period": "90日",
                 "min_price": "100",
                 "min_profit": "フィルターなし",
+                "items_per_keyword": "5",
                 "default_weight": "自動推定",
                 "packaging_weight": "500",
                 "size_multiplier": "1.0"
@@ -174,47 +177,60 @@ class GoogleSheetsClient:
     def read_keywords_from_settings(self) -> List[str]:
         """
         Read keywords from the '設定＆キーワード' (Settings & Keywords) sheet.
+        Generates ALL combinations of keywords × modifiers.
 
-        New layout: E-G columns (starting from row 4)
-          E列: キーワード
-          F列: 修飾語
-          G列: カテゴリ（重量推定用）
+        Layout: E-F columns (starting from row 4)
+          E列: キーワード (main keywords)
+          F列: 修飾語 (modifiers)
 
         Returns:
-            List of combined keywords "keyword modifier"
+            List of all keyword × modifier combinations
         """
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
 
-            # Get all values from columns E-G (starting from row 4)
-            all_values = worksheet.get("E4:G100")
+            # Get all values from columns E-F (starting from row 4)
+            all_values = worksheet.get("E4:F100")
 
             if not all_values:
-                print(f"  [WARN] No keywords found in '設定＆キーワード' sheet (E4:G)")
+                print(f"  [WARN] No keywords found in '設定＆キーワード' sheet (E4:F)")
                 return []
 
-            keywords = []
+            # Collect unique keywords and modifiers separately
+            main_keywords = []
+            modifiers = []
+
             for row in all_values:
                 # E column: main keyword
                 main_kw = row[0].strip() if len(row) > 0 and row[0] else ""
 
                 # Skip empty rows and section headers
-                if not main_kw or main_kw.startswith('【'):
-                    continue
+                if main_kw and not main_kw.startswith('【'):
+                    if main_kw not in main_keywords:
+                        main_keywords.append(main_kw)
 
                 # F column: modifier
                 modifier = row[1].strip() if len(row) > 1 and row[1] else ""
+                if modifier and modifier not in modifiers:
+                    modifiers.append(modifier)
 
-                # Combine: "main modifier" or just "main"
-                if modifier:
-                    combined = f"{main_kw} {modifier}"
-                else:
-                    combined = main_kw
+            # Generate ALL combinations: keyword × modifier
+            combined_keywords = []
 
-                keywords.append(combined)
+            if modifiers:
+                # Generate all keyword × modifier combinations
+                for kw in main_keywords:
+                    for mod in modifiers:
+                        combined = f"{kw} {mod}"
+                        combined_keywords.append(combined)
 
-            print(f"  [INFO] Found {len(keywords)} keywords from '設定＆キーワード' sheet")
-            return keywords
+                print(f"  [INFO] Generated {len(combined_keywords)} combinations from {len(main_keywords)} keywords × {len(modifiers)} modifiers")
+            else:
+                # No modifiers, just use keywords as-is
+                combined_keywords = main_keywords
+                print(f"  [INFO] Found {len(combined_keywords)} keywords (no modifiers)")
+
+            return combined_keywords
 
         except gspread.WorksheetNotFound:
             print(f"  [ERROR] '設定＆キーワード' sheet not found!")

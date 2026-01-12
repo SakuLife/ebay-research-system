@@ -126,6 +126,7 @@ def main():
     market = settings.get("market", "UK")
     min_price_str = settings.get("min_price", "100")
     min_profit_str = settings.get("min_profit", "フィルターなし")
+    items_per_keyword_str = settings.get("items_per_keyword", "5")
 
     # Weight settings
     default_weight = settings.get("default_weight", "自動推定")
@@ -134,11 +135,14 @@ def main():
 
     # Parse values
     min_price_usd = float(min_price_str) if min_price_str.replace(".", "").isdigit() else 100.0
+    items_per_keyword = int(items_per_keyword_str) if items_per_keyword_str.isdigit() else 5
+    items_per_keyword = max(1, min(10, items_per_keyword))  # Clamp to 1-10
     packaging_weight_g = int(packaging_weight_str) if packaging_weight_str.isdigit() else 500
     size_multiplier = float(size_multiplier_str) if size_multiplier_str else 1.0
 
     print(f"  [INFO] Market: {market}")
     print(f"  [INFO] Min price: ${min_price_usd}")
+    print(f"  [INFO] Items per keyword: {items_per_keyword}")
 
     # Parse min_profit (handle "フィルターなし" = no filter)
     if min_profit_str == "フィルターなし" or not min_profit_str:
@@ -190,8 +194,8 @@ def main():
             print(f"  [WARN] No eBay listings found for '{keyword}'")
             continue
 
-        # Limit to top 5 items per keyword
-        active_items = active_items[:5]
+        # Limit to configured items per keyword
+        active_items = active_items[:items_per_keyword]
 
         for item in active_items:
             ebay_url = item.ebay_item_url

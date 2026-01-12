@@ -62,16 +62,17 @@ left_data = [
     ["", "", ""],
     # Row 3: Section header
     ["【基本設定】", "", ""],
-    # Row 4-7: Basic settings
+    # Row 4-8: Basic settings
     ["検索市場", "UK", "eBay検索対象（UK/US/EU）"],
     ["検索期間", "90日", "販売実績期間"],
     ["最低価格($)", "100", "eBay検索の最低価格（ドル）"],
     ["最低利益額", "フィルターなし", "出力する最低利益"],
-    # Row 8: Empty
+    ["取得件数/KW", "5", "キーワードあたりの取得件数(1-10)"],
+    # Row 9: Empty
     ["", "", ""],
-    # Row 9: Section header
+    # Row 10: Section header
     ["【重量設定】", "", ""],
-    # Row 10-12: Weight settings
+    # Row 11-13: Weight settings (NOTE: read_settings reads B10-B12, shifted by 1)
     ["デフォルト重量", "自動推定", "カテゴリ別自動 or 固定値(g)"],
     ["梱包追加重量", "500", "梱包材の重量(g)"],
     ["サイズ倍率", "1.0", "大型商品は1.5など"],
@@ -129,15 +130,15 @@ worksheet.format("E1:F1", {
 })
 
 # Section headers - Gray
-for row in ["A3:C3", "A9:C9", "E3:F3"]:
+for row in ["A3:C3", "A10:C10", "E3:F3"]:
     worksheet.format(row, {
         "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9},
         "textFormat": {"bold": True},
     })
 
 # Settings labels - Bold
-worksheet.format("A4:A7", {"textFormat": {"bold": True}})
-worksheet.format("A10:A12", {"textFormat": {"bold": True}})
+worksheet.format("A4:A8", {"textFormat": {"bold": True}})
+worksheet.format("A11:A13", {"textFormat": {"bold": True}})
 
 # Set column widths
 print("Setting column widths...")
@@ -189,26 +190,33 @@ if HAS_FORMATTING:
         )
         set_data_validation_for_cell_range(worksheet, 'B7', rule_profit)
 
-        # Default weight dropdown (B10)
+        # Items per keyword dropdown (B8)
+        rule_items = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', ['1', '2', '3', '5', '10']),
+            showCustomUi=True
+        )
+        set_data_validation_for_cell_range(worksheet, 'B8', rule_items)
+
+        # Default weight dropdown (B11)
         rule_weight = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['自動推定', '500', '1000', '1500', '2000', '3000']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B10', rule_weight)
+        set_data_validation_for_cell_range(worksheet, 'B11', rule_weight)
 
-        # Packaging weight dropdown (B11)
+        # Packaging weight dropdown (B12)
         rule_packaging = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['300', '500', '800', '1000', '1500', '2000']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B11', rule_packaging)
+        set_data_validation_for_cell_range(worksheet, 'B12', rule_packaging)
 
-        # Size multiplier dropdown (B12)
+        # Size multiplier dropdown (B13)
         rule_size = DataValidationRule(
             BooleanCondition('ONE_OF_LIST', ['0.8', '1.0', '1.25', '1.5', '2.0']),
             showCustomUi=True
         )
-        set_data_validation_for_cell_range(worksheet, 'B12', rule_size)
+        set_data_validation_for_cell_range(worksheet, 'B13', rule_size)
 
         print("  Dropdowns set successfully!")
     except Exception as e:
@@ -219,7 +227,7 @@ else:
 # Add borders
 print("Adding borders...")
 # Left side borders
-worksheet.format("A1:C12", {
+worksheet.format("A1:C13", {
     "borders": {
         "top": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
         "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.8, "green": 0.8, "blue": 0.8}},
@@ -245,13 +253,19 @@ print("\n" + "=" * 50)
 print("[SUCCESS] Settings sheet setup complete!")
 print("=" * 50)
 print("\nLayout:")
-print("  A-C列: 基本設定・重量設定")
-print("  E-G列: キーワード（カテゴリ付き）")
-print("\nDropdowns:")
+print("  A-C列: 基本設定・重量設定 (B4-B8, B11-B13)")
+print("  E-F列: キーワード x 修飾語 (全組み合わせ生成)")
+print("\nSettings (B4-B8):")
 print("  - 検索市場: UK/US/EU")
 print("  - 検索期間: 30日/60日/90日")
+print("  - 最低価格($): 0/30/50/100/150/200")
 print("  - 最低利益額: フィルターなし〜5000円")
+print("  - 取得件数/KW: 1/2/3/5/10")
+print("\nWeight settings (B11-B13):")
 print("  - デフォルト重量: 自動推定 or 固定値")
 print("  - 梱包追加重量: 300g〜2000g")
 print("  - サイズ倍率: 0.8〜2.0")
-print("  - カテゴリ: trading_cards, pokemon, gundam, etc.")
+print("\nKeywords (E-F列):")
+print("  E列: メインキーワード (Pokemon, Gundam, etc.)")
+print("  F列: 修飾語 (Japanese, Limited, Rare, etc.)")
+print("  → 全組み合わせを自動生成")

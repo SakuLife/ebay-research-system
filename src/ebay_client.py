@@ -276,10 +276,21 @@ class EbayClient:
         # Note: Browse API doesn't have "price + shipping" sort option
         filter_parts = ["buyingOptions:{FIXED_PRICE}", "conditionIds:{1000}"]
 
-        # Add minimum price filter if specified
+        # Currency conversion rates (approximate USD to local currency)
+        currency_info = {
+            "UK": {"rate": 0.79, "currency": "GBP"},  # USD to GBP
+            "US": {"rate": 1.0, "currency": "USD"},   # USD to USD
+            "EU": {"rate": 0.92, "currency": "EUR"},  # USD to EUR
+        }
+
+        # Add minimum price filter if specified (convert to local currency)
         if min_price_usd > 0:
-            filter_parts.append(f"price:[{min_price_usd}..]")
-            print(f"  [INFO] Price filter: ${min_price_usd}+")
+            info = currency_info.get(market, {"rate": 1.0, "currency": "USD"})
+            local_price = int(min_price_usd * info["rate"])
+            # IMPORTANT: priceCurrency is required for price filter to work correctly
+            filter_parts.append(f"priceCurrency:{info['currency']}")
+            filter_parts.append(f"price:[{local_price}..]")
+            print(f"  [INFO] Price filter: ${min_price_usd}+ ({info['currency']} {local_price}+)")
 
         params = {
             "q": keyword,
@@ -317,11 +328,17 @@ class EbayClient:
                     title = item.get("title", "")
                     view_url = item.get("itemWebUrl", "")
 
-                    # Get price
+                    # Get price (in local currency)
                     price_info = item.get("price", {})
-                    price = float(price_info.get("value", 0))
+                    price_local = float(price_info.get("value", 0))
+                    currency = price_info.get("currency", "USD")
 
-                    # Code-level price filter (API filter may not work due to currency)
+                    # Convert to USD for comparison
+                    usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}  # Local to USD
+                    usd_rate = usd_rates.get(currency, 1.0)
+                    price = price_local * usd_rate  # Convert to USD
+
+                    # Code-level price filter (compare in USD)
                     if min_price_usd > 0 and price < min_price_usd:
                         continue  # Skip items below min price
 

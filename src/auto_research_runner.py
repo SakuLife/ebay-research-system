@@ -232,7 +232,8 @@ def find_best_matching_source(
     ebay_title: str,
     sources: List[SourceOffer],
     min_similarity: float = 0.2,
-    prefer_sourcing: bool = True
+    prefer_sourcing: bool = True,
+    require_price: bool = True
 ) -> Optional[SourceOffer]:
     """
     eBayタイトルに最もマッチする仕入先を見つける.
@@ -243,6 +244,7 @@ def find_best_matching_source(
         sources: 仕入先候補リスト
         min_similarity: 最低類似度
         prefer_sourcing: 仕入れ可能サイトを優先するか
+        require_price: 価格が必須かどうか（Trueなら価格0円は除外）
 
     Returns:
         最適な仕入先、見つからない場合はNone
@@ -254,6 +256,10 @@ def find_best_matching_source(
     best_score = 0.0
 
     for source in sources:
+        # 価格0円は除外（利益計算できない）
+        if require_price and source.source_price_jpy <= 0:
+            continue
+
         # 類似度
         similarity = calculate_title_similarity(ebay_title, source.title)
         if similarity < min_similarity:

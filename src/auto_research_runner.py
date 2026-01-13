@@ -593,14 +593,18 @@ def find_best_matching_source(
     best_score = 0.0
     excluded_urls = 0
 
+    MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
+
     for source in sources:
         # 許可されていないURL（海外Amazon、PDF等）は除外
         if not is_allowed_source_url(source.source_url):
             excluded_urls += 1
             continue
 
-        # 価格0円は除外（利益計算できない）
-        if require_price and source.source_price_jpy <= 0:
+        # 価格0円の処理
+        # 大手ECサイトは価格0でも候補に含める（後で手動確認）
+        is_major_ec = any(domain in source.source_url for domain in MAJOR_EC_DOMAINS)
+        if require_price and source.source_price_jpy <= 0 and not is_major_ec:
             continue
 
         # 類似度（型番一致ボーナス込み）
@@ -973,16 +977,25 @@ def main():
 
                 # ShoppingItemをSourceOfferに変換
                 # フィルタリング: 価格0円、New条件でのフリマ系サイトを除外
+                # ただし大手ECサイト（Amazon/楽天/Yahoo）は価格0でも含める
+                MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
                 no_url_count = 0
                 no_price_count = 0
+                major_ec_no_price = 0
                 condition_skipped = 0
                 for shop_item in image_results:
                     if not shop_item.link:
                         no_url_count += 1
                         continue
+                    # 大手ECサイトかどうか判定
+                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
                     if shop_item.price <= 0:
-                        no_price_count += 1
-                        continue
+                        if is_major_ec:
+                            # 大手ECは価格0でも含める（後で手動確認）
+                            major_ec_no_price += 1
+                        else:
+                            no_price_count += 1
+                            continue
                     # New条件でフリマ系サイトを除外
                     if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
                         condition_skipped += 1
@@ -998,7 +1011,10 @@ def main():
 
                 # 詳細ログ
                 print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効")
-                print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, フリマ除外: {condition_skipped})")
+                if major_ec_no_price > 0:
+                    print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, 大手EC価格なし: {major_ec_no_price}, フリマ除外: {condition_skipped})")
+                else:
+                    print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, フリマ除外: {condition_skipped})")
 
                 if all_sources:
                     # 候補一覧を表示（類似度付き）
@@ -1050,7 +1066,9 @@ def main():
                 all_sources = []
                 google_url_skipped = 0
                 no_price_skipped = 0
+                major_ec_no_price = 0
                 condition_skipped = 0
+                MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
                 for shop_item in shopping_results:
                     # google.comのURLはスキップ（実際の商品ページではない）
                     if "google.com" in shop_item.link:
@@ -1060,6 +1078,8 @@ def main():
                     if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
                         condition_skipped += 1
                         continue
+
+                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
                         if shop_item.currency == "USD":
@@ -1073,11 +1093,24 @@ def main():
                             stock_hint="",
                             title=shop_item.title,
                         ))
+                    elif is_major_ec:
+                        major_ec_no_price += 1
+                        all_sources.append(SourceOffer(
+                            source_site=shop_item.source,
+                            source_url=encode_url_with_japanese(shop_item.link),
+                            source_price_jpy=0,
+                            source_shipping_jpy=0,
+                            stock_hint="要価格確認",
+                            title=shop_item.title,
+                        ))
                     else:
                         no_price_skipped += 1
 
                 print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効")
-                print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
+                if major_ec_no_price > 0:
+                    print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, 大手EC価格なし: {major_ec_no_price}, フリマ除外: {condition_skipped})")
+                else:
+                    print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
@@ -1162,7 +1195,9 @@ def main():
                 all_sources = []
                 google_url_skipped = 0
                 no_price_skipped = 0
+                major_ec_no_price = 0
                 condition_skipped = 0
+                MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
                 for shop_item in shopping_results:
                     # google.comのURLはスキップ（実際の商品ページではない）
                     if "google.com" in shop_item.link:
@@ -1172,6 +1207,8 @@ def main():
                     if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
                         condition_skipped += 1
                         continue
+
+                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
                         if shop_item.currency == "USD":
@@ -1185,11 +1222,24 @@ def main():
                             stock_hint="",
                             title=shop_item.title,
                         ))
+                    elif is_major_ec:
+                        major_ec_no_price += 1
+                        all_sources.append(SourceOffer(
+                            source_site=shop_item.source,
+                            source_url=encode_url_with_japanese(shop_item.link),
+                            source_price_jpy=0,
+                            source_shipping_jpy=0,
+                            stock_hint="要価格確認",
+                            title=shop_item.title,
+                        ))
                     else:
                         no_price_skipped += 1
 
                 print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効")
-                print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
+                if major_ec_no_price > 0:
+                    print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, 大手EC価格なし: {major_ec_no_price}, フリマ除外: {condition_skipped})")
+                else:
+                    print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
@@ -1254,11 +1304,17 @@ def main():
             # 仕入先が見つかった場合の処理
             total_source_price = 0
             similarity = 0.0
+            needs_price_check = False  # 大手ECで価格なしの場合
             if best_source:
                 total_source_price = best_source.source_price_jpy + best_source.source_shipping_jpy
                 similarity = calculate_title_similarity(ebay_title, best_source.title)
 
-                print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+                # 大手ECで価格がない場合は「要価格確認」
+                if total_source_price <= 0:
+                    needs_price_check = True
+                    print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
+                else:
+                    print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
                 print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
                 if search_method != "画像検索":
                     print(f"  [INFO] Title similarity: {similarity:.0%}")
@@ -1270,8 +1326,11 @@ def main():
             profit_with_rebate = 0
             profit_margin_with_rebate = 0
 
-            # 仕入先がある場合のみ利益計算
-            if best_source:
+            # 仕入先がある場合のみ利益計算（価格確認必要な場合はスキップ）
+            if best_source and needs_price_check:
+                print(f"\n[5/5] Skipping profit calculation (price confirmation needed)")
+                error_reason = "要価格確認"
+            elif best_source:
                 print(f"\n[5/5] Calculating profit...")
 
                 # Estimate weight based on title and price (タイトルから商品タイプを判定)

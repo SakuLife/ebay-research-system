@@ -158,16 +158,12 @@ def extract_model_numbers(text: str) -> set:
 # pykakasi for Japanese to romaji conversion (handles kanji, hiragana, katakana)
 try:
     import pykakasi
+    # pykakasi 2.x uses new API
     _kakasi = pykakasi.kakasi()
-    _kakasi.setMode("H", "a")  # Hiragana to ascii
-    _kakasi.setMode("K", "a")  # Katakana to ascii
-    _kakasi.setMode("J", "a")  # Japanese (kanji) to ascii
-    _kakasi.setMode("r", "Hepburn")  # Use Hepburn romanization
-    _kakasi_converter = _kakasi.getConverter()
     PYKAKASI_AVAILABLE = True
 except ImportError:
     PYKAKASI_AVAILABLE = False
-    _kakasi_converter = None
+    _kakasi = None
 
 
 def normalize_to_romaji(text: str) -> str:
@@ -179,9 +175,11 @@ def normalize_to_romaji(text: str) -> str:
     - "寂しい人が一番偉いんだ" → "sabishii hito ga ichiban erainda"
     - "沙棗 SASO オードパルファム" → "saso saso oodo parufamu"
     """
-    if PYKAKASI_AVAILABLE and _kakasi_converter:
+    if PYKAKASI_AVAILABLE and _kakasi:
         try:
-            text = _kakasi_converter.do(text)
+            # pykakasi 2.x new API: convert() returns list of dicts
+            result = _kakasi.convert(text)
+            text = ''.join([item['hepburn'] for item in result])
         except Exception:
             pass  # Fall through to lowercase
     return text.lower()

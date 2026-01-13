@@ -424,10 +424,29 @@ class SerpApiClient:
             for item in shopping_results[:max_results]:
                 try:
                     title = item.get("title", "")
-                    # リンクは複数フィールドを確認（優先順位: link > product_link > source_link）
-                    link = item.get("link", "") or item.get("product_link", "") or item.get("source_link", "")
                     source = item.get("source", "")
                     thumbnail = item.get("thumbnail", "")
+
+                    # リンク取得（優先順位: product_link > source_link > sellers[0].link）
+                    # linkはGoogle内URLなので使わない
+                    link = item.get("product_link", "") or item.get("source_link", "")
+
+                    # sellersがあればそこから直接リンクを取得
+                    if not link or "google.com" in link:
+                        sellers = item.get("sellers", [])
+                        if sellers and isinstance(sellers, list) and len(sellers) > 0:
+                            link = sellers[0].get("link", "") or link
+
+                    # それでもgoogle.comなら、serpapi_product_api_comparisonsを試す
+                    if not link or "google.com" in link:
+                        comparisons = item.get("serpapi_product_api_comparisons", "")
+                        # comparisonsからは直接URLは取れないが、product_idがあれば後で使える
+                        pass
+
+                    # 最終的にgoogle.comのURLしかない場合は、sourceからURLを推測
+                    if "google.com" in link and source:
+                        # sourceが「Amazon」「楽天」等の場合、URLは取れないがsourceは記録
+                        pass
 
                     # Parse price
                     price = 0.0

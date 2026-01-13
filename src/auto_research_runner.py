@@ -381,22 +381,27 @@ def main():
                 print(f"  [Step 1] Google Lens image search...")
                 image_results = serpapi_client.search_by_image(image_url, max_results=10)
 
-                # ShoppingItemをSourceOfferに変換
+                # ShoppingItemをSourceOfferに変換（価格0円でもURLがあれば含める）
                 for shop_item in image_results:
-                    if shop_item.price > 0:
+                    if shop_item.link:  # URLがあれば追加
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
                             source_url=shop_item.link,
-                            source_price_jpy=shop_item.price,
+                            source_price_jpy=shop_item.price,  # 0円でもOK
                             source_shipping_jpy=0,
-                            stock_hint="",
+                            stock_hint="画像検索",
                             title=shop_item.title,
                         ))
 
                 if all_sources:
                     # 画像検索は類似度チェック不要（画像一致なので確実）
-                    # 最安値を選択
-                    best_source = min(all_sources, key=lambda x: x.source_price_jpy)
+                    # 価格が取れているものを優先して最安値を選択
+                    priced_sources = [s for s in all_sources if s.source_price_jpy > 0]
+                    if priced_sources:
+                        best_source = min(priced_sources, key=lambda x: x.source_price_jpy)
+                    else:
+                        # 価格が取れていないものでもURLは有用なので最初のものを使う
+                        best_source = all_sources[0]
                     search_method = "画像検索"
                     print(f"  [Step 1] Found {len(all_sources)} matches by image!")
 
@@ -410,6 +415,9 @@ def main():
 
                 all_sources = []
                 for shop_item in shopping_results:
+                    # google.comのURLはスキップ（実際の商品ページではない）
+                    if "google.com" in shop_item.link:
+                        continue
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
                         if shop_item.currency == "USD":
@@ -424,7 +432,7 @@ def main():
                             title=shop_item.title,
                         ))
 
-                print(f"  [Step 2] Found {len(all_sources)} items")
+                print(f"  [Step 2] Found {len(all_sources)} items (valid URLs)")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
@@ -477,6 +485,9 @@ def main():
 
                 all_sources = []
                 for shop_item in shopping_results:
+                    # google.comのURLはスキップ（実際の商品ページではない）
+                    if "google.com" in shop_item.link:
+                        continue
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
                         if shop_item.currency == "USD":
@@ -491,7 +502,7 @@ def main():
                             title=shop_item.title,
                         ))
 
-                print(f"  [Step 3] Found {len(all_sources)} items")
+                print(f"  [Step 3] Found {len(all_sources)} items (valid URLs)")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:

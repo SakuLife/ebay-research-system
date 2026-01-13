@@ -609,8 +609,10 @@ def main():
             if serpapi_client.is_enabled and image_url:
                 print(f"  [Step 1] Google Lens画像検索")
                 print(f"    Image URL: {image_url[:80]}...")
-                print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
-                image_results = serpapi_client.search_by_image(image_url, max_results=10)
+                # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）
+                serpapi_condition = "new" if condition == "New" else "any"
+                print(f"    Condition: {serpapi_condition} → {'フリマ除外' if serpapi_condition == 'new' else '全サイト対象'}")
+                image_results = serpapi_client.search_by_image(image_url, condition=serpapi_condition, max_results=10)
 
                 # ShoppingItemをSourceOfferに変換
                 # フィルタリング: 価格0円、New条件でのフリマ系サイトを除外

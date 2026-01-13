@@ -137,25 +137,31 @@ class ShoppingItem:
 class SerpApiClient:
     """SerpApiを使ってeBayの売れた商品を検索するクライアント."""
 
-    # 新品サイト（New時のみ対象）
-    NEW_DOMAINS = [
-        "rakuten.co.jp",
-        "amazon.co.jp",
-        "yodobashi.com",
-        "biccamera.com",
-        "joshin.co.jp",
+    # フリマ・中古系サイト（New条件時に除外）
+    # これ以外のサイトは全て許可（AliExpress, Alibaba等も含む）
+    FLEA_MARKET_DOMAINS = [
+        "mercari.com",      # メルカリ
+        "jp.mercari.com",
+        "yahoo.co.jp",      # ヤフオク
+        "auctions.yahoo.co.jp",
+        "paypayfleamarket", # PayPayフリマ
+        "fril.jp",          # ラクマ
+        "rakuma.rakuten",
+        "magi.camp",        # magi
+        "2ndstreet",        # セカスト
+        "bookoff",          # ブックオフ
+        "hardoff",          # ハードオフ
+        "suruga-ya.jp",     # 駿河屋（中古メイン）
+        "mandarake",        # まんだらけ
+        "lashinbang",       # らしんばん
     ]
 
-    # 中古サイト（Used時に追加で対象）
-    USED_DOMAINS = [
-        "mercari.com",
-        "yahoo.co.jp",      # ヤフオク
-        "magi.camp",
-        "snkrdunk.com",
-        "suruga-ya.jp",
-        "trader.co.jp",
-        "fril.jp",          # ラクマ
-        "2ndstreet.jp",
+    # 除外すべきサイト（検索結果に出てきても無視）
+    EXCLUDED_DOMAINS = [
+        "ebay.com",         # eBay自体
+        "ebay.co.uk",
+        "ebay.de",
+        "google.com",       # Googleリダイレクト
     ]
 
     def __init__(self, api_key: Optional[str] = None):
@@ -665,17 +671,87 @@ class SerpApiClient:
             print(f"  [ERROR] SerpApi Google Shopping request failed: {e}")
             return []
 
+    def _is_excluded_site(self, url: str, condition: str = "any") -> bool:
+        """
+        URLが除外すべきサイトかどうか判定する.
+
+        Args:
+            url: チェックするURL
+            condition: "new"=フリマ除外, "used"/"any"=除外なし
+
+        Returns:
+            True=除外すべき, False=許可
+        """
+        url_lower = url.lower()
+
+        # 常に除外するサイト（eBay自体、Googleリダイレクト等）
+        if any(domain in url_lower for domain in self.EXCLUDED_DOMAINS):
+            return True
+
+        # New条件の場合、フリマ・中古系を除外
+        if condition.lower() == "new":
+            if any(domain in url_lower for domain in self.FLEA_MARKET_DOMAINS):
+                return True
+
+        return False
+
+    def _extract_source_name(self, url: str) -> str:
+        """URLからソース名を抽出する."""
+        url_lower = url.lower()
+
+        # 日本のサイト
+        if "amazon.co.jp" in url_lower or "amazon.jp" in url_lower:
+            return "Amazon"
+        if "rakuten.co.jp" in url_lower:
+            return "楽天"
+        if "yahoo" in url_lower:
+            return "Yahoo"
+        if "mercari" in url_lower:
+            return "メルカリ"
+        if "yodobashi" in url_lower:
+            return "ヨドバシ"
+        if "biccamera" in url_lower:
+            return "ビックカメラ"
+        if "suruga-ya" in url_lower:
+            return "駿河屋"
+
+        # 海外サイト
+        if "aliexpress" in url_lower:
+            return "AliExpress"
+        if "alibaba" in url_lower:
+            return "Alibaba"
+        if "amazon.com" in url_lower:
+            return "Amazon US"
+        if "walmart" in url_lower:
+            return "Walmart"
+        if "target.com" in url_lower:
+            return "Target"
+
+        # ドメインから抽出
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc
+            # www.を除去
+            if domain.startswith("www."):
+                domain = domain[4:]
+            # 最初のドット前を取得
+            return domain.split(".")[0].capitalize()
+        except:
+            return "その他"
+
     def search_by_image(
         self,
         image_url: str,
+        condition: str = "any",
         max_results: int = 10
     ) -> List[ShoppingItem]:
         """
         Google Lensで画像検索する.
-        eBay商品画像から日本の仕入先（メルカリ、ヤフオク、楽天など）を探す.
+        eBay商品画像から仕入先を探す（フリマ除外はconditionで制御）.
 
         Args:
             image_url: eBay商品の画像URL
+            condition: "new"=フリマ除外, "used"/"any"=全サイト対象
             max_results: 最大取得件数
 
         Returns:
@@ -693,18 +769,6 @@ class SerpApiClient:
             "api_key": self.api_key
         }
 
-        # 検索対象の日本のサイトドメイン
-        target_domains = [
-            "mercari.com",
-            "yahoo.co.jp",
-            "rakuten.co.jp",
-            "amazon.co.jp",
-            "magi.camp",
-            "snkrdunk.com",
-            "suruga-ya.jp",
-            "trader.co.jp",
-        ]
-
         try:
             print(f"  [SerpApi] Google Lens image search...")
             search = GoogleSearch(params)
@@ -719,32 +783,25 @@ class SerpApiClient:
             print(f"  [SerpApi] Found {len(visual_matches)} visual matches")
 
             items = []
-            for item in visual_matches[:max_results * 2]:  # 余裕を持って取得
+            excluded_count = 0
+
+            for item in visual_matches[:max_results * 3]:  # 余裕を持って取得
                 try:
                     title = item.get("title", "")
                     # リンクは複数フィールドを確認
                     link = item.get("link", "") or item.get("product_link", "") or item.get("source_link", "")
-                    source = item.get("source", "")
 
                     # リンクが空の場合はスキップ
                     if not link:
                         continue
 
-                    # 日本のサイトのみフィルタ
-                    if not any(domain in link for domain in target_domains):
+                    # 除外サイトチェック（フリマ除外 or 常に除外）
+                    if self._is_excluded_site(link, condition):
+                        excluded_count += 1
                         continue
 
-                    # ソース名を短く
-                    if "mercari" in link:
-                        source = "メルカリ"
-                    elif "yahoo" in link:
-                        source = "ヤフオク"
-                    elif "rakuten" in link:
-                        source = "楽天"
-                    elif "amazon" in link:
-                        source = "Amazon"
-                    elif "suruga" in link:
-                        source = "駿河屋"
+                    # ソース名を抽出
+                    source = self._extract_source_name(link)
 
                     # 価格取得
                     price = 0.0
@@ -772,7 +829,9 @@ class SerpApiClient:
                     print(f"  [WARN] Failed to parse visual match: {e}")
                     continue
 
-            print(f"  [SerpApi] Found {len(items)} Japanese site matches")
+            if excluded_count > 0:
+                print(f"  [SerpApi] Excluded {excluded_count} sites (condition={condition})")
+            print(f"  [SerpApi] Found {len(items)} valid matches")
             return items
 
         except Exception as e:
@@ -788,11 +847,11 @@ class SerpApiClient:
         """
         Google Web検索（日本）で商品を検索する.
         Shopping検索で結果がない場合のフォールバック用.
-        日本のECサイト（メルカリ、ヤフオク、楽天、Amazon等）のみ抽出.
+        ブラックリスト方式：フリマ系以外は全て許可.
 
         Args:
             keyword: 検索キーワード
-            condition: 商品状態 "new", "used", "any"
+            condition: 商品状態 "new"=フリマ除外, "used"/"any"=全サイト
             max_results: 最大取得件数
 
         Returns:
@@ -801,14 +860,6 @@ class SerpApiClient:
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
             return []
-
-        # conditionに基づいて対象ドメインを決定
-        if condition == "new":
-            target_domains = self.NEW_DOMAINS
-        elif condition == "used":
-            target_domains = self.NEW_DOMAINS + self.USED_DOMAINS
-        else:
-            target_domains = self.NEW_DOMAINS + self.USED_DOMAINS
 
         params = {
             "engine": "google",
@@ -833,43 +884,22 @@ class SerpApiClient:
             print(f"  [SerpApi] Found {len(organic_results)} web results")
 
             items = []
+            excluded_count = 0
+
             for item in organic_results:
                 try:
                     link = item.get("link", "")
 
-                    # 日本のECサイトのみフィルタ
-                    if not any(domain in link for domain in target_domains):
+                    # 除外サイトチェック（フリマ除外 or 常に除外）
+                    if self._is_excluded_site(link, condition):
+                        excluded_count += 1
                         continue
 
                     title = item.get("title", "")
                     snippet = item.get("snippet", "")
 
-                    # ソース名を判定
-                    source = ""
-                    if "mercari.com" in link:
-                        source = "メルカリ"
-                    elif "yahoo.co.jp" in link:
-                        source = "ヤフオク"
-                    elif "rakuten.co.jp" in link:
-                        source = "楽天"
-                    elif "amazon.co.jp" in link:
-                        source = "Amazon"
-                    elif "suruga-ya.jp" in link:
-                        source = "駿河屋"
-                    elif "yodobashi.com" in link:
-                        source = "ヨドバシ"
-                    elif "biccamera.com" in link:
-                        source = "ビックカメラ"
-                    elif "magi.camp" in link:
-                        source = "magi"
-                    elif "snkrdunk.com" in link:
-                        source = "スニダン"
-                    elif "fril.jp" in link:
-                        source = "ラクマ"
-                    elif "2ndstreet.jp" in link:
-                        source = "セカスト"
-                    else:
-                        source = "その他"
+                    # ソース名を抽出
+                    source = self._extract_source_name(link)
 
                     # 価格を抽出（snippet内の円表記から）
                     price = 0.0
@@ -905,7 +935,9 @@ class SerpApiClient:
                     print(f"  [WARN] Failed to parse web result: {e}")
                     continue
 
-            print(f"  [SerpApi] Found {len(items)} Japanese EC matches")
+            if excluded_count > 0:
+                print(f"  [SerpApi] Excluded {excluded_count} sites (condition={condition})")
+            print(f"  [SerpApi] Found {len(items)} valid matches")
             return items
 
         except Exception as e:

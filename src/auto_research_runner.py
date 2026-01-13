@@ -405,6 +405,17 @@ def main():
     print(f"eBay AUTO RESEARCH PIPELINE (Pattern②)")
     print(f"="*60)
 
+    # SerpAPI使用履歴を追跡
+    serpapi_usage_log = []
+
+    def log_serpapi_call(search_type: str, query: str, results_count: int):
+        """SerpAPI呼び出しを記録"""
+        serpapi_usage_log.append({
+            "type": search_type,
+            "query": query[:50] + "..." if len(query) > 50 else query,
+            "results": results_count
+        })
+
     # Load environment
     load_dotenv()
 
@@ -535,6 +546,7 @@ def main():
                 item_location=item_location,
                 condition=ebay_condition
             )
+            log_serpapi_call("eBay Sold", keyword, len(serpapi_results))
 
             # Convert SerpApi results to ListingCandidate format
             for sold_item in serpapi_results:
@@ -613,6 +625,7 @@ def main():
                 serpapi_condition = "new" if condition == "New" else "any"
                 print(f"    Condition: {serpapi_condition} → {'フリマ除外' if serpapi_condition == 'new' else '全サイト対象'}")
                 image_results = serpapi_client.search_by_image(image_url, condition=serpapi_condition, max_results=10)
+                log_serpapi_call("Google Lens", f"[IMAGE] {ebay_title[:30]}", len(image_results))
 
                 # ShoppingItemをSourceOfferに変換
                 # フィルタリング: 価格0円、New条件でのフリマ系サイトを除外
@@ -688,6 +701,7 @@ def main():
                 print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
 
                 shopping_results = serpapi_client.search_google_shopping_jp(cleaned_query, max_results=10)
+                log_serpapi_call("Shopping(EN)", cleaned_query, len(shopping_results))
 
                 all_sources = []
                 google_url_skipped = 0
@@ -728,6 +742,7 @@ def main():
                     web_condition = "new" if condition == "New" else "used"
                     print(f"    condition: {web_condition} → 対象サイト: {'新品系' if web_condition == 'new' else '新品+中古系'}")
                     web_results = serpapi_client.search_google_web_jp(cleaned_query, condition=web_condition, max_results=10)
+                    log_serpapi_call("Web(EN)", cleaned_query, len(web_results))
 
                     for shop_item in web_results:
                         # Web検索は価格が取れないことが多いので、URLのみ記録
@@ -798,6 +813,7 @@ def main():
                 print(f"    検索クエリ: {japanese_query}")
                 print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
                 shopping_results = serpapi_client.search_google_shopping_jp(japanese_query, max_results=10)
+                log_serpapi_call("Shopping(JP)", japanese_query, len(shopping_results))
 
                 all_sources = []
                 google_url_skipped = 0
@@ -837,6 +853,7 @@ def main():
                     web_condition = "new" if condition == "New" else "used"
                     print(f"    condition: {web_condition}")
                     web_results = serpapi_client.search_google_web_jp(japanese_query, condition=web_condition, max_results=10)
+                    log_serpapi_call("Web(JP)", japanese_query, len(web_results))
 
                     for shop_item in web_results:
                         all_sources.append(SourceOffer(
@@ -1021,6 +1038,23 @@ def main():
     print(f"{'='*60}")
     print(f"Total processed: {total_processed}")
     print(f"Profitable items: {total_profitable}")
+
+    # SerpAPI使用履歴サマリー
+    if serpapi_usage_log:
+        print(f"\n--- SerpAPI Usage Log ({len(serpapi_usage_log)} calls) ---")
+        # タイプ別に集計
+        type_counts = {}
+        for log in serpapi_usage_log:
+            t = log["type"]
+            type_counts[t] = type_counts.get(t, 0) + 1
+
+        for t, count in sorted(type_counts.items()):
+            print(f"  {t}: {count} calls")
+
+        print(f"\n  Details:")
+        for i, log in enumerate(serpapi_usage_log, 1):
+            print(f"  {i:2}. [{log['type']:12}] {log['query']} → {log['results']}件")
+
     print(f"{'='*60}")
 
 

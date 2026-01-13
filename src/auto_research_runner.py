@@ -292,7 +292,7 @@ def main():
         print(f"\n[3/5] Searching eBay sold items (${min_price_usd}+)...")
 
         # Currency conversion for local price filter
-        currency_rates = {"UK": 0.79, "US": 1.0, "EU": 0.92}  # USD to local
+        currency_rates = {"UK": 0.79, "US": 1.0, "EU": 0.90}  # USD to local (conservative)
         local_rate = currency_rates.get(market, 0.79)
         min_price_local = min_price_usd * local_rate
 
@@ -321,6 +321,7 @@ def main():
                     sold_signal=1,  # It's a sold item
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
+                    image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
                 ))
 
         if sold_items:

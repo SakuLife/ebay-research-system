@@ -21,6 +21,7 @@ class SoldItem:
     item_id: str
     condition: str = ""
     shipping: str = ""
+    thumbnail: str = ""  # 商品サムネイル画像URL
 
 
 @dataclass
@@ -151,6 +152,7 @@ class SerpApiClient:
 
                     condition = item.get("condition", "")
                     shipping = item.get("shipping", "")
+                    thumbnail = item.get("thumbnail", "")
 
                     sold_items.append(SoldItem(
                         title=title,
@@ -160,6 +162,7 @@ class SerpApiClient:
                         item_id=item_id,
                         condition=condition,
                         shipping=shipping,
+                        thumbnail=thumbnail,
                     ))
 
                 except Exception as e:
@@ -311,7 +314,8 @@ class SerpApiClient:
             for item in shopping_results[:max_results]:
                 try:
                     title = item.get("title", "")
-                    link = item.get("link", "")
+                    # リンクは複数フィールドを確認（優先順位: link > product_link > source_link）
+                    link = item.get("link", "") or item.get("product_link", "") or item.get("source_link", "")
                     source = item.get("source", "")
                     thumbnail = item.get("thumbnail", "")
 
@@ -414,8 +418,13 @@ class SerpApiClient:
             for item in visual_matches[:max_results * 2]:  # 余裕を持って取得
                 try:
                     title = item.get("title", "")
-                    link = item.get("link", "")
+                    # リンクは複数フィールドを確認
+                    link = item.get("link", "") or item.get("product_link", "") or item.get("source_link", "")
                     source = item.get("source", "")
+
+                    # リンクが空の場合はスキップ
+                    if not link:
+                        continue
 
                     # 日本のサイトのみフィルタ
                     if not any(domain in link for domain in target_domains):

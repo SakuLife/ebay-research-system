@@ -241,6 +241,61 @@ class EbayClient:
                 print(f"  [INFO] Item {item_id} not found (may be sold/removed)")
             return None
 
+    def get_item_category(self, item_id: str, market: str = "UK") -> tuple:
+        """
+        Get category info for an item by item ID.
+
+        Args:
+            item_id: eBay item ID (numeric string)
+            market: Market (UK, US, EU)
+
+        Returns:
+            Tuple of (category_id, category_name) or ("", "") if not found
+        """
+        try:
+            token = self._get_access_token()
+
+            marketplace_map = {
+                "UK": "EBAY_GB",
+                "US": "EBAY_US",
+                "EU": "EBAY_DE"
+            }
+            marketplace_id = marketplace_map.get(market, "EBAY_GB")
+
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "X-EBAY-C-MARKETPLACE-ID": marketplace_id
+            }
+
+            # Format item ID for API
+            if item_id.startswith("v1|"):
+                url = f"{self.browse_url}/item/{item_id}"
+            else:
+                url = f"{self.browse_url}/item/v1|{item_id}|0"
+
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                return ("", "")
+
+            data = response.json()
+
+            # Extract category info
+            category_id = data.get("categoryId", "")
+            category_path = data.get("categoryPath", "")
+
+            # categoryPath is like "Toys & Hobbies|Model Railroads & Trains|N Scale"
+            # Take the last part as category name
+            if category_path:
+                category_name = category_path.split("|")[-1]
+            else:
+                category_name = ""
+
+            return (str(category_id), category_name)
+
+        except Exception as e:
+            print(f"    [WARN] Failed to get category: {e}")
+            return ("", "")
+
     def search_active_listings(
         self,
         keyword: str,

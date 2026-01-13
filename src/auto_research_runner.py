@@ -805,6 +805,17 @@ def main():
             item_id_match = re.search(r'/itm/(\d+)', ebay_url)
             ebay_item_id = item_id_match.group(1) if item_id_match else ""
 
+            # カテゴリが取得できていない場合、Browse APIから取得
+            if ebay_item_id and not category_id:
+                try:
+                    fetched_cat_id, fetched_cat_name = ebay_client.get_item_category(ebay_item_id, market)
+                    if fetched_cat_id:
+                        category_id = fetched_cat_id
+                        category_name = fetched_cat_name
+                        print(f"  [INFO] Category fetched from Browse API: {category_name} ({category_id})")
+                except Exception as e:
+                    print(f"  [WARN] Could not fetch category: {e}")
+
             # 処理済みならスキップ
             if ebay_item_id and ebay_item_id in processed_ebay_ids:
                 print(f"\n  [SKIP] Already processed: {ebay_item_id}")

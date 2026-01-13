@@ -265,6 +265,20 @@ EXCLUDED_URL_PATTERNS = [
     "alibaba",
     "shein.com",
     "temu.com",
+    # 海外TLD（日本以外）
+    ".ch/",           # スイス
+    ".de/",           # ドイツ
+    ".nl/",           # オランダ
+    ".fr/",           # フランス
+    ".it/",           # イタリア
+    ".es/",           # スペイン
+    ".co.uk/",        # イギリス
+    ".com.au/",       # オーストラリア
+    # 検索一覧ページ（個別商品ページではない）
+    "search.rakuten.co.jp/search/",
+    "search.yahoo.co.jp",
+    "/search?q=",
+    "/s?k=",          # Amazon検索
 ]
 
 
@@ -492,6 +506,31 @@ def find_best_matching_source(
     return best_source
 
 
+def get_processed_ebay_ids(sheet_client) -> set:
+    """
+    スプレッドシートから処理済みeBay商品IDを取得する.
+    eBayリンク列（K列）からitem IDを抽出.
+    """
+    try:
+        worksheet = sheet_client.spreadsheet.worksheet("入力シート")
+        # K列（eBayリンク）を取得
+        ebay_urls = worksheet.col_values(11)  # K列 = 11番目
+
+        processed_ids = set()
+        for url in ebay_urls[1:]:  # ヘッダーをスキップ
+            if not url:
+                continue
+            # URLからitem IDを抽出
+            match = re.search(r'/itm/(\d+)', url)
+            if match:
+                processed_ids.add(match.group(1))
+
+        return processed_ids
+    except Exception as e:
+        print(f"  [WARN] Failed to get processed IDs: {e}")
+        return set()
+
+
 def get_next_empty_row(sheet_client) -> int:
     """Get the next empty row number in the input sheet."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
@@ -651,9 +690,15 @@ def main():
 
     print(f"  [INFO] Keywords: {', '.join(keywords)}")
 
+    # 処理済みeBay商品IDを取得（重複スキップ用）
+    print(f"\n[2.5/6] Loading processed eBay item IDs...")
+    processed_ebay_ids = get_processed_ebay_ids(sheets_client)
+    print(f"  [INFO] Found {len(processed_ebay_ids)} already processed items")
+
     # Step 2-5: Process each keyword
     total_processed = 0
     total_profitable = 0
+    total_skipped = 0  # スキップ数カウント
 
     for raw_keyword in keywords:
         # キーワードをクリーニング（日本語・括弧を除去）
@@ -736,10 +781,14 @@ def main():
             print(f"  [WARN] No eBay listings found for '{keyword}'")
             continue
 
-        # Limit to configured items per keyword
-        active_items = active_items[:items_per_keyword]
+        # 余裕を持って取得（スキップされる分を考慮）
+        # 実際に処理する件数は items_per_keyword まで
+        items_processed_this_keyword = 0
 
         for item in active_items:
+            # 指定件数に達したら終了
+            if items_processed_this_keyword >= items_per_keyword:
+                break
             ebay_url = item.ebay_item_url
             ebay_price = item.ebay_price
             ebay_shipping = item.ebay_shipping
@@ -747,6 +796,16 @@ def main():
             item_currency = getattr(item, 'currency', 'USD')
             category_id = getattr(item, 'category_id', '') or ''
             category_name = getattr(item, 'category_name', '') or ''
+
+            # eBay item IDを抽出
+            item_id_match = re.search(r'/itm/(\d+)', ebay_url)
+            ebay_item_id = item_id_match.group(1) if item_id_match else ""
+
+            # 処理済みならスキップ
+            if ebay_item_id and ebay_item_id in processed_ebay_ids:
+                print(f"\n  [SKIP] Already processed: {ebay_item_id}")
+                total_skipped += 1
+                continue
 
             # 画像URLも取得
             image_url = getattr(item, 'image_url', '') or ''
@@ -1171,6 +1230,7 @@ def main():
 
             row_num = write_result_to_spreadsheet(sheets_client, result_data)
             total_processed += 1
+            items_processed_this_keyword += 1  # このキーワードで処理した件数
 
             if profit_no_rebate > 0 and not error_reason:
                 total_profitable += 1
@@ -1190,6 +1250,7 @@ def main():
     print(f"AUTO RESEARCH COMPLETED")
     print(f"{'='*60}")
     print(f"Total processed: {total_processed}")
+    print(f"Skipped (already in sheet): {total_skipped}")
     print(f"Profitable items: {total_profitable}")
 
     # SerpAPI使用履歴サマリー

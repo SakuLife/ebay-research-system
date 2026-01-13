@@ -121,6 +121,7 @@ SOURCING_PRIORITY_SITES = [
 ]
 
 # 相場参考サイト（売り切れが多い、参考価格）
+# ※New条件では除外対象
 MARKET_REFERENCE_SITES = [
     "メルカリ",
     "mercari",
@@ -131,6 +132,48 @@ MARKET_REFERENCE_SITES = [
     "fril",
     "magi",
 ]
+
+
+def is_valid_source_for_condition(source_site: str, source_url: str, condition: str) -> bool:
+    """
+    条件（New/Used）に基づいて仕入先が有効かどうか判定する.
+
+    New条件の場合:
+      - メルカリ、ヤフオク、PayPayフリマ等の中古系サイトは除外
+      - Amazon、楽天、ヨドバシ等の新品系サイトのみ許可
+
+    Used条件の場合:
+      - 全サイト許可
+
+    Args:
+        source_site: サイト名（「メルカリ」「Amazon」等）
+        source_url: サイトURL
+        condition: "New" or "Used"
+
+    Returns:
+        True: 有効な仕入先, False: 除外
+    """
+    if condition != "New":
+        return True  # Used条件は全て許可
+
+    # New条件の場合、中古系サイトを除外
+    site_lower = source_site.lower()
+    url_lower = source_url.lower()
+
+    # 中古系サイトのパターン
+    used_patterns = [
+        "mercari", "メルカリ",
+        "yahoo", "ヤフオク", "paypay",
+        "fril", "ラクマ",
+        "magi",
+        "2ndstreet", "セカスト",
+    ]
+
+    for pattern in used_patterns:
+        if pattern in site_lower or pattern in url_lower:
+            return False
+
+    return True
 
 
 def calculate_condition_score(title: str, source_site: str) -> float:
@@ -480,47 +523,72 @@ def main():
             if serpapi_client.is_enabled and image_url:
                 print(f"  [Step 1] Google Lens画像検索")
                 print(f"    Image URL: {image_url[:80]}...")
+                print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
                 image_results = serpapi_client.search_by_image(image_url, max_results=10)
 
-                # ShoppingItemをSourceOfferに変換（価格0円でもURLがあれば含める）
+                # ShoppingItemをSourceOfferに変換
+                # フィルタリング: 価格0円、New条件でのフリマ系サイトを除外
                 no_url_count = 0
+                no_price_count = 0
+                condition_skipped = 0
                 for shop_item in image_results:
-                    if shop_item.link:  # URLがあれば追加
-                        all_sources.append(SourceOffer(
-                            source_site=shop_item.source,
-                            source_url=shop_item.link,
-                            source_price_jpy=shop_item.price,  # 0円でもOK
-                            source_shipping_jpy=0,
-                            stock_hint="画像検索",
-                            title=shop_item.title,
-                        ))
-                    else:
+                    if not shop_item.link:
                         no_url_count += 1
+                        continue
+                    if shop_item.price <= 0:
+                        no_price_count += 1
+                        continue
+                    # New条件でフリマ系サイトを除外
+                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
+                        condition_skipped += 1
+                        continue
+                    all_sources.append(SourceOffer(
+                        source_site=shop_item.source,
+                        source_url=shop_item.link,
+                        source_price_jpy=shop_item.price,
+                        source_shipping_jpy=0,
+                        stock_hint="画像検索",
+                        title=shop_item.title,
+                    ))
 
                 # 詳細ログ
-                priced_sources = [s for s in all_sources if s.source_price_jpy > 0]
-                print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効 (価格あり: {len(priced_sources)}件, URL無し: {no_url_count}件)")
+                print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効")
+                print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, フリマ除外: {condition_skipped})")
 
                 if all_sources:
-                    # 候補一覧を表示
-                    print(f"    --- 候補一覧 (価格順) ---")
-                    sorted_sources = sorted(all_sources, key=lambda x: x.source_price_jpy if x.source_price_jpy > 0 else float('inf'))
-                    for i, src in enumerate(sorted_sources[:5]):
-                        price_str = f"JPY {src.source_price_jpy:,.0f}" if src.source_price_jpy > 0 else "価格不明"
-                        print(f"    {i+1}. [{src.source_site}] {price_str} - {src.title[:40]}...")
+                    # 候補一覧を表示（類似度付き）
+                    print(f"    --- 候補一覧 (スコア順) ---")
+                    scored_sources = []
+                    for src in all_sources:
+                        sim = calculate_title_similarity(ebay_title, src.title)
+                        cond_score = calculate_condition_score(src.title, src.source_site)
+                        prio = calculate_source_priority(src.source_site)
+                        total = sim * cond_score * prio
+                        scored_sources.append((src, sim, cond_score, prio, total))
+                    scored_sources.sort(key=lambda x: x[4], reverse=True)
 
-                    # 画像検索は類似度チェック不要（画像一致なので確実）
-                    # 価格が取れているものを優先して最安値を選択
-                    if priced_sources:
-                        best_source = min(priced_sources, key=lambda x: x.source_price_jpy)
-                        print(f"    → 選択: 最安値 [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f}")
+                    for i, (src, sim, cond_score, prio, total) in enumerate(scored_sources[:5]):
+                        prio_label = "仕入" if prio >= 0.9 else "相場" if prio <= 0.6 else "中"
+                        print(f"    {i+1}. [{src.source_site}] JPY {src.source_price_jpy:,.0f}")
+                        print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
+                        print(f"       {src.title[:50]}...")
+
+                    # 画像検索でも類似度チェック（誤爆防止、ただし閾値は低め）
+                    # 画像一致でも全く関係ない商品の場合があるため
+                    MIN_IMAGE_SIMILARITY = 0.15  # 画像検索は閾値を低めに
+                    valid_sources = [(src, sim, total) for src, sim, _, _, total in scored_sources if sim >= MIN_IMAGE_SIMILARITY]
+
+                    if valid_sources:
+                        # スコア最高のものを選択
+                        best_item = max(valid_sources, key=lambda x: x[2])
+                        best_source = best_item[0]
+                        best_sim = best_item[1]
+                        print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{best_sim:.0%})")
+                        search_method = "画像検索"
                     else:
-                        # 価格が取れていないものでもURLは有用なので最初のものを使う
-                        best_source = all_sources[0]
-                        print(f"    → 選択: 価格不明だがURL有効 [{best_source.source_site}]")
-                    search_method = "画像検索"
+                        print(f"    → 類似度閾値({MIN_IMAGE_SIMILARITY:.0%})未満のため選択なし、次のステップへ")
                 else:
-                    print(f"    → 日本サイトの結果なし、次のステップへ")
+                    print(f"    → 有効な仕入先なし、次のステップへ")
 
             # === 2. 英語のままでGoogle Shopping検索 ===
             if not best_source and serpapi_client.is_enabled and ebay_title:
@@ -529,16 +597,22 @@ def main():
                 print(f"  [Step 2] Google Shopping検索 (英語)")
                 print(f"    元クエリ: {ebay_title[:60]}...")
                 print(f"    整形後: {cleaned_query[:60]}...")
+                print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
 
                 shopping_results = serpapi_client.search_google_shopping_jp(cleaned_query, max_results=10)
 
                 all_sources = []
                 google_url_skipped = 0
                 no_price_skipped = 0
+                condition_skipped = 0
                 for shop_item in shopping_results:
                     # google.comのURLはスキップ（実際の商品ページではない）
                     if "google.com" in shop_item.link:
                         google_url_skipped += 1
+                        continue
+                    # New条件でフリマ系サイトを除外
+                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
+                        condition_skipped += 1
                         continue
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
@@ -556,7 +630,8 @@ def main():
                     else:
                         no_price_skipped += 1
 
-                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効 (google.comスキップ: {google_url_skipped}件, 価格無し: {no_price_skipped}件)")
+                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効")
+                print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
@@ -633,15 +708,21 @@ def main():
 
                 # 日本語で検索
                 print(f"    検索クエリ: {japanese_query}")
+                print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
                 shopping_results = serpapi_client.search_google_shopping_jp(japanese_query, max_results=10)
 
                 all_sources = []
                 google_url_skipped = 0
                 no_price_skipped = 0
+                condition_skipped = 0
                 for shop_item in shopping_results:
                     # google.comのURLはスキップ（実際の商品ページではない）
                     if "google.com" in shop_item.link:
                         google_url_skipped += 1
+                        continue
+                    # New条件でフリマ系サイトを除外
+                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
+                        condition_skipped += 1
                         continue
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
@@ -659,7 +740,8 @@ def main():
                     else:
                         no_price_skipped += 1
 
-                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効 (google.comスキップ: {google_url_skipped}件, 価格無し: {no_price_skipped}件)")
+                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効")
+                print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:

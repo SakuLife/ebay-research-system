@@ -202,9 +202,9 @@ def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
     return total_similarity
 
 
-# 許可する日本円で支払えるサイト（ホワイトリスト方式）
-# これに含まれないサイト（海外Amazon等）は除外
-ALLOWED_JPY_SITES = [
+# 許可する日本国内ECサイト（ホワイトリスト方式）
+# 海外サイトは全て除外
+ALLOWED_JAPANESE_DOMAINS = [
     # 大手EC
     "amazon.co.jp",
     "rakuten.co.jp",
@@ -235,19 +235,13 @@ ALLOWED_JPY_SITES = [
     # その他
     "askul.co.jp",
     "lohaco.jp",
-    # 海外だが日本円で支払い可能
-    "aliexpress.com",  # AliExpress（円払い可能）
-    "ja.aliexpress",   # AliExpress日本語版
 ]
 
-# 後方互換性のため
-ALLOWED_JAPANESE_DOMAINS = ALLOWED_JPY_SITES
-
-# 除外すべきURL・ドメインパターン（日本円で買えないサイト）
+# 除外すべきURL・ドメインパターン（海外サイト全般）
 EXCLUDED_URL_PATTERNS = [
     ".pdf",           # PDFファイル
     "/pdf/",
-    # 海外Amazon（円で買えない）
+    # 海外Amazon
     "amazon.com",     # アメリカ
     "amazon.co.uk",   # イギリス
     "amazon.de",      # ドイツ
@@ -261,30 +255,34 @@ EXCLUDED_URL_PATTERNS = [
     "ebay.com",
     "ebay.co.uk",
     "ebay.de",
-    # 海外小売（円で買えない）
+    # 海外小売
     "walmart.com",
     "target.com",
     "bestbuy.com",
     "wish.com",
-    # AliExpressはOK（円払い可能）→除外しない
+    # 中国系
+    "aliexpress",
+    "alibaba",
+    "shein.com",
+    "temu.com",
 ]
 
 
 def is_allowed_source_url(url: str) -> bool:
     """
-    URLが日本円で支払える仕入先かどうか判定する.
+    URLが日本国内の仕入先かどうか判定する.
 
     許可されるサイト:
-    - ALLOWED_JPY_SITESに含まれるサイト（Amazon.co.jp、AliExpress等）
+    - ALLOWED_JAPANESE_DOMAINSに含まれるサイト
     - .jpドメイン（未知の日本サイト）
 
     除外されるサイト:
-    - 海外Amazon (amazon.com, amazon.de等)
-    - PDF、eBay、Walmart等
+    - 海外Amazon、AliExpress、Shein等の海外サイト
+    - PDF、eBay等
 
     Returns:
-        True: 許可（円払い可能）
-        False: 除外（円払い不可）
+        True: 許可（日本国内サイト）
+        False: 除外（海外サイト）
     """
     if not url:
         return False
@@ -296,8 +294,8 @@ def is_allowed_source_url(url: str) -> bool:
         if pattern in url_lower:
             return False
 
-    # 許可リスト（日本円で支払える）に一致したらOK
-    for domain in ALLOWED_JPY_SITES:
+    # 許可リスト（日本国内）に一致したらOK
+    for domain in ALLOWED_JAPANESE_DOMAINS:
         if domain in url_lower:
             return True
 
@@ -309,12 +307,11 @@ def is_allowed_source_url(url: str) -> bool:
     return False
 
 
-# 仕入れ優先サイト（再現性が高い、在庫がある、円払い可能）
+# 仕入れ優先サイト（再現性が高い、在庫がある）
 SOURCING_PRIORITY_SITES = [
     "amazon",
     "楽天",
     "rakuten",
-    "aliexpress",   # 中国仕入れ（円払い可能、在庫豊富）
     "駿河屋",
     "suruga",
     "ヨドバシ",

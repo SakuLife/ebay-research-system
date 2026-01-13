@@ -17,7 +17,7 @@ from .sheets_client import GoogleSheetsClient
 from .spreadsheet_mapping import INPUT_SHEET_COLUMNS
 from .search_base_client import SearchBaseClient
 from .config_loader import load_all_configs
-from .weight_estimator import estimate_weight_from_price
+from .weight_estimator import estimate_weight_from_title, detect_product_type
 from .models import SourceOffer, ListingCandidate
 from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shopping
 from .gemini_client import GeminiClient
@@ -105,31 +105,131 @@ def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
     return similarity
 
 
+# 仕入れ優先サイト（再現性が高い、在庫がある）
+SOURCING_PRIORITY_SITES = [
+    "amazon",
+    "楽天",
+    "rakuten",
+    "駿河屋",
+    "suruga",
+    "ヨドバシ",
+    "yodobashi",
+    "ビックカメラ",
+    "biccamera",
+    "cardotaku",
+    "カードショップ",
+]
+
+# 相場参考サイト（売り切れが多い、参考価格）
+MARKET_REFERENCE_SITES = [
+    "メルカリ",
+    "mercari",
+    "ヤフオク",
+    "yahoo",
+    "paypay",
+    "ラクマ",
+    "fril",
+    "magi",
+]
+
+
+def calculate_condition_score(title: str, source_site: str) -> float:
+    """
+    国内商品のconditionスコアを計算する.
+    新品/未開封は加点、中古/難ありは減点.
+
+    Returns:
+        スコア（0.0〜2.0、1.0が基準）
+    """
+    title_lower = title.lower()
+    score = 1.0
+
+    # 新品/未開封系キーワード（加点）
+    new_keywords = ["未開封", "新品", "sealed", "新品未開封", "未使用", "brand new", "factory sealed"]
+    if any(kw in title_lower for kw in new_keywords):
+        score += 0.3
+
+    # 中古系キーワード（減点、ただし即除外しない）
+    used_keywords = ["中古", "used", "難あり", "ジャンク", "訳あり", "傷あり", "プレイ用"]
+    if any(kw in title_lower for kw in used_keywords):
+        score -= 0.3
+
+    # 状態良好系（軽い加点）
+    good_condition = ["美品", "極美品", "良品", "mint", "excellent", "near mint"]
+    if any(kw in title_lower for kw in good_condition):
+        score += 0.1
+
+    return max(0.1, min(2.0, score))
+
+
+def calculate_source_priority(source_site: str) -> float:
+    """
+    仕入先の優先度を計算する.
+    仕入れ可能なサイトは高スコア、相場参考サイトは低スコア.
+
+    Returns:
+        優先度スコア（0.0〜1.0）
+    """
+    site_lower = source_site.lower()
+
+    # 仕入れ優先サイト
+    for site in SOURCING_PRIORITY_SITES:
+        if site.lower() in site_lower:
+            return 1.0
+
+    # 相場参考サイト
+    for site in MARKET_REFERENCE_SITES:
+        if site.lower() in site_lower:
+            return 0.5
+
+    return 0.7  # 不明なサイトは中間
+
+
 def find_best_matching_source(
     ebay_title: str,
     sources: List[SourceOffer],
-    min_similarity: float = 0.2
+    min_similarity: float = 0.2,
+    prefer_sourcing: bool = True
 ) -> Optional[SourceOffer]:
     """
-    eBayタイトルに最もマッチする仕入先を見つける。
-    類似度が閾値未満の場合はNoneを返す。
+    eBayタイトルに最もマッチする仕入先を見つける.
+    類似度 × conditionスコア × 仕入れ優先度 で総合評価.
+
+    Args:
+        ebay_title: eBayの商品タイトル
+        sources: 仕入先候補リスト
+        min_similarity: 最低類似度
+        prefer_sourcing: 仕入れ可能サイトを優先するか
+
+    Returns:
+        最適な仕入先、見つからない場合はNone
     """
     if not sources:
         return None
 
     best_source = None
-    best_similarity = 0.0
+    best_score = 0.0
 
     for source in sources:
+        # 類似度
         similarity = calculate_title_similarity(ebay_title, source.title)
-        if similarity > best_similarity:
-            best_similarity = similarity
+        if similarity < min_similarity:
+            continue
+
+        # conditionスコア
+        condition_score = calculate_condition_score(source.title, source.source_site)
+
+        # 仕入れ優先度
+        priority = calculate_source_priority(source.source_site) if prefer_sourcing else 1.0
+
+        # 総合スコア = 類似度 × conditionスコア × 優先度
+        total_score = similarity * condition_score * priority
+
+        if total_score > best_score:
+            best_score = total_score
             best_source = source
 
-    if best_similarity >= min_similarity:
-        return best_source
-
-    return None
+    return best_source
 
 
 def get_next_empty_row(sheet_client) -> int:
@@ -563,19 +663,21 @@ def main():
             if best_source:
                 print(f"\n[5/5] Calculating profit...")
 
-                # Estimate weight based on keyword and price
-                weight_est = estimate_weight_from_price(ebay_price, keyword.split()[0].lower())
+                # Estimate weight based on title and price (タイトルから商品タイプを判定)
+                product_type = detect_product_type(ebay_title)
+                weight_est = estimate_weight_from_title(ebay_title, ebay_price)
 
                 # Apply size multiplier from settings
                 adjusted_depth = weight_est.depth_cm * size_multiplier
                 adjusted_width = weight_est.width_cm * size_multiplier
                 adjusted_height = weight_est.height_cm * size_multiplier
 
-                # Apply packaging weight from settings (override default)
-                adjusted_weight_g = weight_est.actual_weight_g - 500 + packaging_weight_g
+                # 重量は推定値をそのまま使用（カテゴリ別上限が適用済み）
+                adjusted_weight_g = weight_est.applied_weight_g
 
-                print(f"  [INFO] Weight estimate: {adjusted_weight_g}g (packaging: {packaging_weight_g}g)")
-                print(f"  [INFO] Dimensions: {adjusted_depth:.1f}x{adjusted_width:.1f}x{adjusted_height:.1f}cm (x{size_multiplier})")
+                print(f"  [INFO] Product type: {product_type}")
+                print(f"  [INFO] Weight estimate: {adjusted_weight_g}g ({weight_est.estimation_basis})")
+                print(f"  [INFO] Dimensions: {adjusted_depth:.1f}x{adjusted_width:.1f}x{adjusted_height:.1f}cm")
 
                 try:
                     # Use search base client for accurate calculation

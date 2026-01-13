@@ -356,3 +356,112 @@ class SerpApiClient:
         except Exception as e:
             print(f"  [ERROR] SerpApi Google Shopping request failed: {e}")
             return []
+
+    def search_by_image(
+        self,
+        image_url: str,
+        max_results: int = 10
+    ) -> List[ShoppingItem]:
+        """
+        Google Lensで画像検索する.
+        eBay商品画像から日本の仕入先（メルカリ、ヤフオク、楽天など）を探す.
+
+        Args:
+            image_url: eBay商品の画像URL
+            max_results: 最大取得件数
+
+        Returns:
+            ShoppingItemのリスト
+        """
+        if not self.is_enabled:
+            print("  [WARN] SerpApi is not available")
+            return []
+
+        params = {
+            "engine": "google_lens",
+            "url": image_url,
+            "hl": "ja",
+            "country": "jp",
+            "api_key": self.api_key
+        }
+
+        # 検索対象の日本のサイトドメイン
+        target_domains = [
+            "mercari.com",
+            "yahoo.co.jp",
+            "rakuten.co.jp",
+            "amazon.co.jp",
+            "magi.camp",
+            "snkrdunk.com",
+            "suruga-ya.jp",
+            "trader.co.jp",
+        ]
+
+        try:
+            print(f"  [SerpApi] Google Lens image search...")
+            search = GoogleSearch(params)
+            results = search.get_dict()
+
+            if "error" in results:
+                print(f"  [ERROR] SerpApi Google Lens error: {results['error']}")
+                return []
+
+            # visual_matches に視覚的に似ている商品が入っている
+            visual_matches = results.get("visual_matches", [])
+            print(f"  [SerpApi] Found {len(visual_matches)} visual matches")
+
+            items = []
+            for item in visual_matches[:max_results * 2]:  # 余裕を持って取得
+                try:
+                    title = item.get("title", "")
+                    link = item.get("link", "")
+                    source = item.get("source", "")
+
+                    # 日本のサイトのみフィルタ
+                    if not any(domain in link for domain in target_domains):
+                        continue
+
+                    # ソース名を短く
+                    if "mercari" in link:
+                        source = "メルカリ"
+                    elif "yahoo" in link:
+                        source = "ヤフオク"
+                    elif "rakuten" in link:
+                        source = "楽天"
+                    elif "amazon" in link:
+                        source = "Amazon"
+                    elif "suruga" in link:
+                        source = "駿河屋"
+
+                    # 価格取得
+                    price = 0.0
+                    price_info = item.get("price", {})
+                    if isinstance(price_info, dict):
+                        price = price_info.get("extracted_value", 0) or 0
+                    elif isinstance(price_info, (int, float)):
+                        price = float(price_info)
+
+                    thumbnail = item.get("thumbnail", "")
+
+                    items.append(ShoppingItem(
+                        title=title,
+                        price=price,
+                        currency="JPY",
+                        link=link,
+                        source=source,
+                        thumbnail=thumbnail,
+                    ))
+
+                    if len(items) >= max_results:
+                        break
+
+                except Exception as e:
+                    print(f"  [WARN] Failed to parse visual match: {e}")
+                    continue
+
+            print(f"  [SerpApi] Found {len(items)} Japanese site matches")
+            return items
+
+        except Exception as e:
+            print(f"  [ERROR] SerpApi Google Lens request failed: {e}")
+            return []

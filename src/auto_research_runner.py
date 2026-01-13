@@ -349,27 +349,58 @@ def main():
             category_id = getattr(item, 'category_id', '') or ''
             category_name = getattr(item, 'category_name', '') or ''
 
+            # 画像URLも取得
+            image_url = getattr(item, 'image_url', '') or ''
+
             print(f"\n  Processing: {ebay_url}")
             print(f"  [INFO] eBay title: {ebay_title[:60]}..." if len(ebay_title) > 60 else f"  [INFO] eBay title: {ebay_title}")
             print(f"  [INFO] eBay price: ${ebay_price:.2f} ({item_currency}) + ${ebay_shipping} shipping")
             if category_name:
                 print(f"  [INFO] Category: {category_name} ({category_id})")
+            if image_url:
+                print(f"  [INFO] Image: {image_url[:60]}...")
 
-            # Step 4: Search domestic sources (SerpAPI Google Shopping)
-            # 1. まず英語のままで検索
-            # 2. 見つからなければ日本語に翻訳して再検索
+            # Step 4: Search domestic sources (3段階検索)
+            # 1. Google Lens画像検索（最も精度が高い）
+            # 2. 英語のままでGoogle Shopping検索
+            # 3. 日本語に翻訳してGoogle Shopping検索
 
             print(f"\n[4/5] Searching domestic sources...")
 
             all_sources = []
             best_source = None
+            search_method = ""
 
-            # === 1. 英語のままで検索 ===
-            if serpapi_client.is_enabled and ebay_title:
-                print(f"  [SerpAPI] Searching (English): {ebay_title[:50]}...")
-                shopping_results = serpapi_client.search_google_shopping_jp(ebay_title, max_results=10)
+            # === 1. Google Lens画像検索 ===
+            if serpapi_client.is_enabled and image_url:
+                print(f"  [Step 1] Google Lens image search...")
+                image_results = serpapi_client.search_by_image(image_url, max_results=10)
 
                 # ShoppingItemをSourceOfferに変換
+                for shop_item in image_results:
+                    if shop_item.price > 0:
+                        all_sources.append(SourceOffer(
+                            source_site=shop_item.source,
+                            source_url=shop_item.link,
+                            source_price_jpy=shop_item.price,
+                            source_shipping_jpy=0,
+                            stock_hint="",
+                            title=shop_item.title,
+                        ))
+
+                if all_sources:
+                    # 画像検索は類似度チェック不要（画像一致なので確実）
+                    # 最安値を選択
+                    best_source = min(all_sources, key=lambda x: x.source_price_jpy)
+                    search_method = "画像検索"
+                    print(f"  [Step 1] Found {len(all_sources)} matches by image!")
+
+            # === 2. 英語のままでGoogle Shopping検索 ===
+            if not best_source and serpapi_client.is_enabled and ebay_title:
+                print(f"  [Step 2] Google Shopping (English): {ebay_title[:40]}...")
+                shopping_results = serpapi_client.search_google_shopping_jp(ebay_title, max_results=10)
+
+                all_sources = []
                 for shop_item in shopping_results:
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
@@ -381,18 +412,20 @@ def main():
                             source_url=shop_item.link,
                             source_price_jpy=price_jpy,
                             source_shipping_jpy=0,
+                            stock_hint="",
                             title=shop_item.title,
                         ))
 
-                print(f"  [SerpAPI] Found {len(all_sources)} items (English search)")
+                print(f"  [Step 2] Found {len(all_sources)} items")
 
-                # 類似商品があるかチェック
                 if all_sources:
                     best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
+                    if best_source:
+                        search_method = "英語検索"
 
-            # === 2. 英語で見つからなければ日本語で再検索 ===
+            # === 3. 日本語に翻訳してGoogle Shopping検索 ===
             if not best_source and serpapi_client.is_enabled:
-                print(f"  [INFO] No match with English, trying Japanese...")
+                print(f"  [Step 3] Trying Japanese search...")
 
                 # Geminiで翻訳
                 gemini_client = GeminiClient()
@@ -407,11 +440,11 @@ def main():
                     japanese_query = extract_search_keywords(ebay_title) if ebay_title else keyword
                     print(f"  [INFO] Using extracted keywords: {japanese_query}")
 
-                # 日本語で再検索
-                print(f"  [SerpAPI] Searching (Japanese): {japanese_query}")
+                # 日本語で検索
+                print(f"  [Step 3] Google Shopping (Japanese): {japanese_query}")
                 shopping_results = serpapi_client.search_google_shopping_jp(japanese_query, max_results=10)
 
-                all_sources = []  # リセット
+                all_sources = []
                 for shop_item in shopping_results:
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
@@ -423,14 +456,16 @@ def main():
                             source_url=shop_item.link,
                             source_price_jpy=price_jpy,
                             source_shipping_jpy=0,
+                            stock_hint="",
                             title=shop_item.title,
                         ))
 
-                print(f"  [SerpAPI] Found {len(all_sources)} items (Japanese search)")
+                print(f"  [Step 3] Found {len(all_sources)} items")
 
-                # 日本語検索結果から類似商品を探す
                 if all_sources:
                     best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
+                    if best_source:
+                        search_method = "日本語検索"
 
             # 結果判定
             error_reason = None
@@ -452,9 +487,10 @@ def main():
                 total_source_price = best_source.source_price_jpy + best_source.source_shipping_jpy
                 similarity = calculate_title_similarity(ebay_title, best_source.title)
 
-                print(f"  [INFO] Best source: {best_source.source_site} - JPY {total_source_price}")
+                print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
                 print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
-                print(f"  [INFO] Title similarity: {similarity:.0%}")
+                if search_method != "画像検索":
+                    print(f"  [INFO] Title similarity: {similarity:.0%}")
                 print(f"  [INFO] URL: {best_source.source_url}")
 
             # Step 5: Calculate profit (with weight estimation)

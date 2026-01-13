@@ -17,6 +17,7 @@ class ListingCandidate:
     category_name: str = ""
     ebay_title: str = ""
     currency: str = "USD"
+    image_url: str = ""  # 商品画像URL（Google Lens検索用）
 
 
 @dataclass

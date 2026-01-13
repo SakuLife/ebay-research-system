@@ -371,6 +371,17 @@ class EbayClient:
                         category_id = categories[0].get("categoryId", "")
                         category_name = categories[0].get("categoryName", "")
 
+                    # Get image URL (for Google Lens search)
+                    image_url = ""
+                    image_info = item.get("image", {})
+                    if image_info:
+                        image_url = image_info.get("imageUrl", "")
+                    # Fallback to thumbnailImages
+                    if not image_url:
+                        thumbnails = item.get("thumbnailImages", [])
+                        if thumbnails:
+                            image_url = thumbnails[0].get("imageUrl", "")
+
                     candidate = ListingCandidate(
                         candidate_id=str(uuid.uuid4()),
                         search_query=keyword,
@@ -382,6 +393,7 @@ class EbayClient:
                         category_name=category_name,
                         ebay_title=title,
                         currency=currency,
+                        image_url=image_url,
                     )
                     candidates.append(candidate)
 

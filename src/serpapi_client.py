@@ -952,6 +952,11 @@ class SerpApiClient:
             items = []
             excluded_count = 0
 
+            # デバッグ: 最初の3件の内容を表示
+            for i, sample in enumerate(organic_results[:3]):
+                print(f"    [DEBUG] Web {i+1}: {sample.get('title', '')[:40]}...")
+                print(f"             snippet: {sample.get('snippet', '')[:60]}...")
+
             for item in organic_results:
                 try:
                     link = item.get("link", "")
@@ -967,9 +972,19 @@ class SerpApiClient:
                     # ソース名を抽出
                     source = self._extract_source_name(link)
 
-                    # 価格を抽出（title + snippet から検索）
+                    # 価格を抽出（title + snippet + rich_snippet から検索）
                     price = 0.0
-                    text_to_search = f"{title} {snippet}"
+                    rich_snippet = item.get("rich_snippet", {})
+                    rich_text = ""
+                    if isinstance(rich_snippet, dict):
+                        # rich_snippet内のテキストを全て結合
+                        for key, val in rich_snippet.items():
+                            if isinstance(val, str):
+                                rich_text += f" {val}"
+                            elif isinstance(val, list):
+                                rich_text += " ".join(str(v) for v in val)
+
+                    text_to_search = f"{title} {snippet} {rich_text}"
 
                     # 複数の価格パターンを試す
                     price_patterns = [
@@ -988,9 +1003,18 @@ class SerpApiClient:
                                 break
                             price = 0.0  # リセットして次のパターン
 
-                    # 価格0円の場合はスキップ（利益計算できない）
-                    if price <= 0:
+                    # 大手ECサイトの場合、価格0でも結果に含める
+                    # （後で手動確認 or API連携で価格取得可能）
+                    major_ec_sites = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
+                    is_major_ec = any(site in link for site in major_ec_sites)
+
+                    # 価格0円で大手EC以外はスキップ
+                    if price <= 0 and not is_major_ec:
                         continue
+
+                    # 大手ECで価格なしの場合、結果には含めるが価格は推定不可としてマーク
+                    if price <= 0 and is_major_ec:
+                        print(f"    [INFO] Major EC site without price: {source} - {title[:40]}...")
 
                     thumbnail = item.get("thumbnail", "")
 

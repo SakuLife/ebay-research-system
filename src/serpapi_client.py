@@ -379,6 +379,37 @@ class SerpApiClient:
             print(f"  [ERROR] SerpApi Amazon request failed: {e}")
             return []
 
+    def _extract_url_from_google_redirect(self, google_url: str) -> Optional[str]:
+        """
+        Google.comのリダイレクトURLから実際の商品URLを抽出する.
+
+        Args:
+            google_url: google.comを含むURL
+
+        Returns:
+            抽出された実URL、または抽出できない場合はNone
+        """
+        if not google_url or "google.com" not in google_url:
+            return None
+
+        try:
+            from urllib.parse import urlparse, parse_qs, unquote
+
+            parsed = urlparse(google_url)
+            query_params = parse_qs(parsed.query)
+
+            # よくあるリダイレクトパラメータ
+            for param in ["url", "q", "u", "adurl", "dest", "redirect"]:
+                if param in query_params:
+                    extracted = unquote(query_params[param][0])
+                    # google.comでない実際のURLの場合は返す
+                    if extracted and "google.com" not in extracted and extracted.startswith("http"):
+                        return extracted
+
+            return None
+        except Exception:
+            return None
+
     def search_google_shopping_jp(
         self,
         keyword: str,
@@ -421,32 +452,35 @@ class SerpApiClient:
             print(f"  [SerpApi] Found {len(shopping_results)} shopping items")
 
             items = []
-            for item in shopping_results[:max_results]:
+            skipped_google_urls = 0
+
+            for item in shopping_results[:max_results * 2]:  # 余裕を持って取得
                 try:
                     title = item.get("title", "")
                     source = item.get("source", "")
                     thumbnail = item.get("thumbnail", "")
 
                     # リンク取得（優先順位: product_link > source_link > sellers[0].link）
-                    # linkはGoogle内URLなので使わない
                     link = item.get("product_link", "") or item.get("source_link", "")
 
                     # sellersがあればそこから直接リンクを取得
                     if not link or "google.com" in link:
                         sellers = item.get("sellers", [])
                         if sellers and isinstance(sellers, list) and len(sellers) > 0:
-                            link = sellers[0].get("link", "") or link
+                            seller_link = sellers[0].get("link", "")
+                            if seller_link and "google.com" not in seller_link:
+                                link = seller_link
 
-                    # それでもgoogle.comなら、serpapi_product_api_comparisonsを試す
+                    # google.comのリダイレクトURLから実URLを抽出を試みる
+                    if link and "google.com" in link:
+                        extracted_url = self._extract_url_from_google_redirect(link)
+                        if extracted_url:
+                            link = extracted_url
+
+                    # 最終的にgoogle.comのURLしかない場合はスキップ
                     if not link or "google.com" in link:
-                        comparisons = item.get("serpapi_product_api_comparisons", "")
-                        # comparisonsからは直接URLは取れないが、product_idがあれば後で使える
-                        pass
-
-                    # 最終的にgoogle.comのURLしかない場合は、sourceからURLを推測
-                    if "google.com" in link and source:
-                        # sourceが「Amazon」「楽天」等の場合、URLは取れないがsourceは記録
-                        pass
+                        skipped_google_urls += 1
+                        continue
 
                     # Parse price
                     price = 0.0
@@ -456,11 +490,14 @@ class SerpApiClient:
                     else:
                         price_str = item.get("price", "")
                         if price_str:
-                            import re
                             # 数値を抽出（カンマ除去）
                             match = re.search(r'[\d,]+', price_str.replace(',', ''))
                             if match:
                                 price = float(match.group().replace(',', ''))
+
+                    # 価格0円はスキップ
+                    if price <= 0:
+                        continue
 
                     # 通貨判定
                     price_str = item.get("price", "")
@@ -480,9 +517,16 @@ class SerpApiClient:
                         thumbnail=thumbnail,
                     ))
 
+                    if len(items) >= max_results:
+                        break
+
                 except Exception as e:
                     print(f"  [WARN] Failed to parse shopping item: {e}")
                     continue
+
+            if skipped_google_urls > 0:
+                print(f"  [SerpApi] Skipped {skipped_google_urls} items with google.com URLs")
+            print(f"  [SerpApi] Returning {len(items)} valid shopping items")
 
             return items
 
@@ -707,6 +751,10 @@ class SerpApiClient:
                         price_match = re.search(r'[¥￥]\s*([\d,]+)', snippet)
                         if price_match:
                             price = float(price_match.group(1).replace(',', ''))
+
+                    # 価格0円の場合はスキップ（利益計算できない）
+                    if price <= 0:
+                        continue
 
                     thumbnail = item.get("thumbnail", "")
 

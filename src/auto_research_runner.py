@@ -278,7 +278,11 @@ EXCLUDED_URL_PATTERNS = [
     "search.rakuten.co.jp/search/",
     "search.yahoo.co.jp",
     "/search?q=",
+    "/search?",
     "/s?k=",          # Amazon検索
+    "/item/?",        # Bandai一覧ページ
+    "/products?",     # 商品一覧
+    "/category/",     # カテゴリページ
 ]
 
 

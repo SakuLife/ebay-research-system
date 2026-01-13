@@ -307,6 +307,15 @@ class SerpApiClient:
                                 category_name = ext
                                 break
 
+                    # デバッグ: カテゴリ情報を表示
+                    if category_id or category_name:
+                        print(f"    [DEBUG] Category: {category_name} ({category_id})")
+                    else:
+                        # どのキーにカテゴリがあるか確認
+                        cat_keys = [k for k in item.keys() if 'cat' in k.lower()]
+                        if cat_keys:
+                            print(f"    [DEBUG] Cat keys found: {cat_keys} = {[item.get(k) for k in cat_keys]}")
+
                     sold_items.append(SoldItem(
                         title=title,
                         price=price,
@@ -796,6 +805,11 @@ class SerpApiClient:
             visual_matches = results.get("visual_matches", [])
             print(f"  [SerpApi] Found {len(visual_matches)} visual matches")
 
+            # デバッグ: 最初の3件のデータ構造を表示
+            for i, sample in enumerate(visual_matches[:3]):
+                price_data = sample.get("price", "N/A")
+                print(f"    [DEBUG] Sample {i+1}: price={price_data}, keys={list(sample.keys())[:5]}")
+
             items = []
             excluded_count = 0
 
@@ -817,15 +831,35 @@ class SerpApiClient:
                     # ソース名を抽出
                     source = self._extract_source_name(link)
 
-                    # 価格取得
+                    # 価格取得（複数の形式に対応）
                     price = 0.0
                     price_info = item.get("price", {})
                     if isinstance(price_info, dict):
+                        # extracted_value を優先
                         price = price_info.get("extracted_value", 0) or 0
+                        # value も試す
+                        if price == 0:
+                            price = price_info.get("value", 0) or 0
+                        # raw から抽出（"￥17,900" 形式）
+                        if price == 0:
+                            raw = price_info.get("raw", "") or price_info.get("currency", "")
+                            if raw:
+                                match = re.search(r'[\d,]+', str(raw).replace(',', ''))
+                                if match:
+                                    price = float(match.group().replace(',', ''))
                     elif isinstance(price_info, (int, float)):
                         price = float(price_info)
+                    elif isinstance(price_info, str):
+                        # 文字列から価格を抽出
+                        match = re.search(r'[\d,]+', price_info.replace(',', ''))
+                        if match:
+                            price = float(match.group().replace(',', ''))
 
                     thumbnail = item.get("thumbnail", "")
+
+                    # デバッグ: 価格0のとき、price_infoの中身を表示
+                    if price == 0 and price_info:
+                        print(f"    [DEBUG] Lens: price=0, info={price_info}, title={title[:30]}")
 
                     items.append(ShoppingItem(
                         title=title,

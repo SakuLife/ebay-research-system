@@ -855,6 +855,21 @@ class SerpApiClient:
                         if match:
                             price = float(match.group().replace(',', ''))
 
+                    # price_info がない場合、タイトルから価格を抽出
+                    if price == 0:
+                        price_patterns = [
+                            r'[¥￥]\s*([\d,]+)\s*円',
+                            r'([\d,]+)\s*円',
+                            r'[¥￥]\s*([\d,]+)',
+                        ]
+                        for pattern in price_patterns:
+                            match = re.search(pattern, title)
+                            if match:
+                                extracted = float(match.group(1).replace(',', ''))
+                                if extracted >= 100:
+                                    price = extracted
+                                    break
+
                     thumbnail = item.get("thumbnail", "")
 
                     # デバッグ: 価格0のとき、price_infoの中身を表示
@@ -909,9 +924,12 @@ class SerpApiClient:
             print("  [WARN] SerpApi is not available")
             return []
 
+        # 「通販」を追加して通販サイトを優先的にヒット
+        search_query = f"{keyword} 通販"
+
         params = {
             "engine": "google",
-            "q": keyword,
+            "q": search_query,
             "location": "Japan",
             "hl": "ja",
             "gl": "jp",
@@ -920,7 +938,7 @@ class SerpApiClient:
         }
 
         try:
-            print(f"  [SerpApi] Google Web search: '{keyword[:50]}...'")
+            print(f"  [SerpApi] Google Web search: '{keyword[:50]}...' (+通販)")
             search = GoogleSearch(params)
             results = search.get_dict()
 
@@ -949,17 +967,26 @@ class SerpApiClient:
                     # ソース名を抽出
                     source = self._extract_source_name(link)
 
-                    # 価格を抽出（snippet内の円表記から）
+                    # 価格を抽出（title + snippet から検索）
                     price = 0.0
-                    # "1,234円" or "¥1,234" パターン
-                    price_match = re.search(r'[¥￥]?\s*([\d,]+)\s*円', snippet)
-                    if price_match:
-                        price = float(price_match.group(1).replace(',', ''))
-                    else:
-                        # "¥1,234" パターン（円なし）
-                        price_match = re.search(r'[¥￥]\s*([\d,]+)', snippet)
+                    text_to_search = f"{title} {snippet}"
+
+                    # 複数の価格パターンを試す
+                    price_patterns = [
+                        r'[¥￥]\s*([\d,]+)\s*円',      # ¥1,234円
+                        r'([\d,]+)\s*円\s*[（(税込]?',  # 1,234円（税込）
+                        r'[¥￥]\s*([\d,]+)(?!\d)',     # ¥1,234
+                        r'価格[：:]\s*[¥￥]?([\d,]+)', # 価格：1,234
+                        r'([\d,]{4,})\s*円',           # 1234円 (4桁以上)
+                    ]
+
+                    for pattern in price_patterns:
+                        price_match = re.search(pattern, text_to_search)
                         if price_match:
                             price = float(price_match.group(1).replace(',', ''))
+                            if price >= 100:  # 100円以上のみ有効
+                                break
+                            price = 0.0  # リセットして次のパターン
 
                     # 価格0円の場合はスキップ（利益計算できない）
                     if price <= 0:

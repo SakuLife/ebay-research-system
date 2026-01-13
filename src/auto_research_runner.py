@@ -752,9 +752,70 @@ def main():
             best_source = None
             search_method = ""
 
-            # === 1. Google Lens画像検索 ===
-            if serpapi_client.is_enabled and image_url:
-                print(f"  [Step 1] Google Lens画像検索")
+            # === 1. 英語でGoogle Shopping（グローバル検索）===
+            # 英語の商品名でそのまま検索、AliExpress・Amazon.co.jp等を含む
+            if serpapi_client.is_enabled and not best_source:
+                cleaned_query = clean_query_for_shopping(ebay_title, max_length=80)
+                print(f"  [Step 1] Google Shopping (Global/英語)")
+                print(f"    クエリ: {cleaned_query[:60]}...")
+
+                shopping_results = serpapi_client.search_google_shopping_jp(cleaned_query, max_results=10, global_search=True)
+                log_serpapi_call("Shopping(Global)", cleaned_query, len(shopping_results))
+
+                all_sources = []
+                for shop_item in shopping_results:
+                    if not shop_item.link or "google.com" in shop_item.link:
+                        continue
+                    if shop_item.price <= 0:
+                        continue
+                    # 通貨変換（USD→JPY）
+                    if shop_item.currency == "USD":
+                        price_jpy = shop_item.price * 150  # 仮レート
+                    else:
+                        price_jpy = shop_item.price
+
+                    all_sources.append(SourceOffer(
+                        source_site=shop_item.source,
+                        source_url=encode_url_with_japanese(shop_item.link),
+                        source_price_jpy=price_jpy,
+                        source_shipping_jpy=0,
+                        stock_hint="Global Shopping",
+                        title=shop_item.title,
+                    ))
+
+                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効")
+
+                if all_sources:
+                    # 候補一覧を表示
+                    print(f"    --- 候補一覧 (スコア順) ---")
+                    scored_sources = []
+                    for src in all_sources:
+                        sim = calculate_title_similarity(ebay_title, src.title)
+                        cond_score = calculate_condition_score(src.title, src.source_site)
+                        prio = calculate_source_priority(src.source_site)
+                        total = sim * cond_score * prio
+                        scored_sources.append((src, sim, cond_score, prio, total))
+                    scored_sources.sort(key=lambda x: x[4], reverse=True)
+
+                    for i, (src, sim, cond_score, prio, total) in enumerate(scored_sources[:5]):
+                        prio_label = "仕入" if prio >= 0.9 else "相場" if prio <= 0.6 else "中"
+                        print(f"    {i+1}. [{src.source_site}] JPY {src.source_price_jpy:,.0f}")
+                        print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
+                        print(f"       {src.title[:50]}...")
+
+                    # 閾値チェック
+                    MIN_SIMILARITY = 0.2
+                    best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=MIN_SIMILARITY)
+                    if best_source:
+                        sim = calculate_title_similarity(ebay_title, best_source.title)
+                        print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{sim:.0%})")
+                        search_method = "Global Shopping"
+                    else:
+                        print(f"    → 類似度閾値未満のため選択なし、次のステップへ")
+
+            # === 2. Google Lens画像検索 ===
+            if serpapi_client.is_enabled and image_url and not best_source:
+                print(f"  [Step 2] Google Lens画像検索")
                 print(f"    Image URL: {image_url[:80]}...")
                 # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）
                 serpapi_condition = "new" if condition == "New" else "any"
@@ -826,11 +887,11 @@ def main():
                 else:
                     print(f"    → 有効な仕入先なし、次のステップへ")
 
-            # === 2. 英語のままでGoogle Shopping検索 ===
+            # === 3. 英語のままでGoogle Shopping検索（日本向け）===
             if not best_source and serpapi_client.is_enabled and ebay_title:
                 # クエリを整形（PSA番号、状態表記、ノイズワード除去）
                 cleaned_query = clean_query_for_shopping(ebay_title)
-                print(f"  [Step 2] Google Shopping検索 (英語)")
+                print(f"  [Step 3] Google Shopping検索 (英語/日本向け)")
                 print(f"    元クエリ: {ebay_title[:60]}...")
                 print(f"    整形後: {cleaned_query[:60]}...")
                 print(f"    Condition: {condition} → {'新品系サイトのみ' if condition == 'New' else '全サイト対象'}")
@@ -872,7 +933,7 @@ def main():
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
-                    print(f"  [Step 2b] Shopping結果なし → Web検索フォールバック")
+                    print(f"  [Step 3b] Shopping結果なし → Web検索フォールバック")
                     # conditionに応じて検索対象サイトを変更
                     web_condition = "new" if condition == "New" else "used"
                     print(f"    condition: {web_condition} → 対象サイト: {'新品系' if web_condition == 'new' else '新品+中古系'}")
@@ -919,9 +980,9 @@ def main():
                     else:
                         print(f"    → 類似度閾値(20%)未満のため選択なし")
 
-            # === 3. 日本語に翻訳してGoogle Shopping検索 ===
+            # === 4. 日本語に翻訳してGoogle Shopping検索 ===
             if not best_source and serpapi_client.is_enabled:
-                print(f"  [Step 3] Google Shopping検索 (日本語翻訳)")
+                print(f"  [Step 4] Google Shopping検索 (日本語翻訳)")
 
                 # まずタイトルを整形してからGeminiで翻訳（ノイズを減らす）
                 cleaned_title = clean_query_for_shopping(ebay_title) if ebay_title else ""
@@ -984,7 +1045,7 @@ def main():
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
-                    print(f"  [Step 3b] Shopping結果なし → Web検索フォールバック")
+                    print(f"  [Step 4b] Shopping結果なし → Web検索フォールバック")
                     web_condition = "new" if condition == "New" else "used"
                     print(f"    condition: {web_condition}")
                     web_results = serpapi_client.search_google_web_jp(japanese_query, condition=web_condition, max_results=10)

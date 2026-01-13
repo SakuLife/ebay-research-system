@@ -550,15 +550,17 @@ class SerpApiClient:
     def search_google_shopping_jp(
         self,
         keyword: str,
-        max_results: int = 10
+        max_results: int = 10,
+        global_search: bool = False
     ) -> List[ShoppingItem]:
         """
-        Google Shopping（日本）で商品を検索する.
-        Amazon, 楽天, StockXなど複数サイトの結果を一括取得.
+        Google Shoppingで商品を検索する.
+        Amazon, 楽天, AliExpress等の結果を取得.
 
         Args:
             keyword: 検索キーワード
             max_results: 最大取得件数
+            global_search: True=グローバル検索（US拠点）、False=日本限定
 
         Returns:
             ShoppingItemのリスト
@@ -567,17 +569,29 @@ class SerpApiClient:
             print("  [WARN] SerpApi is not available")
             return []
 
-        params = {
-            "engine": "google_shopping",
-            "q": keyword,
-            "location": "Japan",
-            "hl": "ja",
-            "gl": "jp",
-            "api_key": self.api_key
-        }
+        if global_search:
+            # グローバル検索（AliExpress, Amazon.com等も含む）
+            params = {
+                "engine": "google_shopping",
+                "q": keyword,
+                "hl": "en",
+                "gl": "us",
+                "api_key": self.api_key
+            }
+            print(f"  [SerpApi] Searching Google Shopping (Global): '{keyword}'")
+        else:
+            # 日本限定検索
+            params = {
+                "engine": "google_shopping",
+                "q": keyword,
+                "location": "Japan",
+                "hl": "ja",
+                "gl": "jp",
+                "api_key": self.api_key
+            }
+            print(f"  [SerpApi] Searching Google Shopping (JP): '{keyword}'")
 
         try:
-            print(f"  [SerpApi] Searching Google Shopping: '{keyword}'")
             search = GoogleSearch(params)
             results = search.get_dict()
 

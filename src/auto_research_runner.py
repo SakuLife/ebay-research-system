@@ -1323,12 +1323,13 @@ def main():
 
                 # Check if profit meets minimum threshold
                 if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
-                    print(f"  [INFO] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy}")
-                    error_reason = f"利益不足 (JPY {profit_no_rebate:.0f})"
+                    print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy} → スキップ")
+                    items_processed_this_keyword += 1
+                    continue  # スプレッドシートに書き込まずスキップ
             else:
                 print(f"\n[5/5] Skipping profit calculation (no source found)")
 
-            # Write to spreadsheet（常に出力、エラー時もerror付きで）
+            # Write to spreadsheet（利益がOKまたはエラー理由ありの場合のみ）
             sourcing_results = []
             if best_source:
                 sourcing_results.append({

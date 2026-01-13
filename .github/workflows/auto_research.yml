@@ -54,6 +54,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-2.5-flash
 
+          # SerpAPI (Google Lens / Google Shopping / eBay Sold)
+          SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
+
           # Mock settings
           USE_MOCKS: ${{ secrets.USE_MOCKS }}
         run: |

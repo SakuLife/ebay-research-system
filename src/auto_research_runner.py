@@ -478,10 +478,12 @@ def main():
 
             # === 1. Google Lens画像検索 ===
             if serpapi_client.is_enabled and image_url:
-                print(f"  [Step 1] Google Lens image search...")
+                print(f"  [Step 1] Google Lens画像検索")
+                print(f"    Image URL: {image_url[:80]}...")
                 image_results = serpapi_client.search_by_image(image_url, max_results=10)
 
                 # ShoppingItemをSourceOfferに変換（価格0円でもURLがあれば含める）
+                no_url_count = 0
                 for shop_item in image_results:
                     if shop_item.link:  # URLがあれば追加
                         all_sources.append(SourceOffer(
@@ -492,31 +494,51 @@ def main():
                             stock_hint="画像検索",
                             title=shop_item.title,
                         ))
+                    else:
+                        no_url_count += 1
+
+                # 詳細ログ
+                priced_sources = [s for s in all_sources if s.source_price_jpy > 0]
+                print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効 (価格あり: {len(priced_sources)}件, URL無し: {no_url_count}件)")
 
                 if all_sources:
+                    # 候補一覧を表示
+                    print(f"    --- 候補一覧 (価格順) ---")
+                    sorted_sources = sorted(all_sources, key=lambda x: x.source_price_jpy if x.source_price_jpy > 0 else float('inf'))
+                    for i, src in enumerate(sorted_sources[:5]):
+                        price_str = f"JPY {src.source_price_jpy:,.0f}" if src.source_price_jpy > 0 else "価格不明"
+                        print(f"    {i+1}. [{src.source_site}] {price_str} - {src.title[:40]}...")
+
                     # 画像検索は類似度チェック不要（画像一致なので確実）
                     # 価格が取れているものを優先して最安値を選択
-                    priced_sources = [s for s in all_sources if s.source_price_jpy > 0]
                     if priced_sources:
                         best_source = min(priced_sources, key=lambda x: x.source_price_jpy)
+                        print(f"    → 選択: 最安値 [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f}")
                     else:
                         # 価格が取れていないものでもURLは有用なので最初のものを使う
                         best_source = all_sources[0]
+                        print(f"    → 選択: 価格不明だがURL有効 [{best_source.source_site}]")
                     search_method = "画像検索"
-                    print(f"  [Step 1] Found {len(all_sources)} matches by image!")
+                else:
+                    print(f"    → 日本サイトの結果なし、次のステップへ")
 
             # === 2. 英語のままでGoogle Shopping検索 ===
             if not best_source and serpapi_client.is_enabled and ebay_title:
                 # クエリを整形（PSA番号、状態表記、ノイズワード除去）
                 cleaned_query = clean_query_for_shopping(ebay_title)
-                print(f"  [Step 2] Google Shopping (English): {cleaned_query[:50]}...")
+                print(f"  [Step 2] Google Shopping検索 (英語)")
+                print(f"    元クエリ: {ebay_title[:60]}...")
+                print(f"    整形後: {cleaned_query[:60]}...")
 
                 shopping_results = serpapi_client.search_google_shopping_jp(cleaned_query, max_results=10)
 
                 all_sources = []
+                google_url_skipped = 0
+                no_price_skipped = 0
                 for shop_item in shopping_results:
                     # google.comのURLはスキップ（実際の商品ページではない）
                     if "google.com" in shop_item.link:
+                        google_url_skipped += 1
                         continue
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
@@ -531,14 +553,17 @@ def main():
                             stock_hint="",
                             title=shop_item.title,
                         ))
+                    else:
+                        no_price_skipped += 1
 
-                print(f"  [Step 2] Found {len(all_sources)} items (valid URLs)")
+                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効 (google.comスキップ: {google_url_skipped}件, 価格無し: {no_price_skipped}件)")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
-                    print(f"  [Step 2b] Shopping 0 results, trying Web search...")
+                    print(f"  [Step 2b] Shopping結果なし → Web検索フォールバック")
                     # conditionに応じて検索対象サイトを変更
                     web_condition = "new" if condition == "New" else "used"
+                    print(f"    condition: {web_condition} → 対象サイト: {'新品系' if web_condition == 'new' else '新品+中古系'}")
                     web_results = serpapi_client.search_google_web_jp(cleaned_query, condition=web_condition, max_results=10)
 
                     for shop_item in web_results:
@@ -552,19 +577,42 @@ def main():
                             title=shop_item.title,
                         ))
 
-                    print(f"  [Step 2b] Found {len(all_sources)} items via Web search")
+                    priced = len([s for s in all_sources if s.source_price_jpy > 0])
+                    print(f"    結果: {len(web_results)}件取得 → {len(all_sources)}件有効 (価格あり: {priced}件)")
 
                 if all_sources:
+                    # 候補一覧を表示（スコア付き）
+                    print(f"    --- 候補一覧 (スコア順) ---")
+                    scored_sources = []
+                    for src in all_sources:
+                        sim = calculate_title_similarity(ebay_title, src.title)
+                        cond = calculate_condition_score(src.title, src.source_site)
+                        prio = calculate_source_priority(src.source_site)
+                        total = sim * cond * prio
+                        scored_sources.append((src, sim, cond, prio, total))
+                    scored_sources.sort(key=lambda x: x[4], reverse=True)
+
+                    for i, (src, sim, cond, prio, total) in enumerate(scored_sources[:5]):
+                        price_str = f"JPY {src.source_price_jpy:,.0f}" if src.source_price_jpy > 0 else "価格不明"
+                        prio_label = "仕入" if prio >= 0.9 else "相場" if prio <= 0.6 else "中"
+                        print(f"    {i+1}. [{src.source_site}] {price_str}")
+                        print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
+                        print(f"       {src.title[:50]}...")
+
                     best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
                     if best_source:
                         search_method = "英語検索"
+                        print(f"    → 選択: [{best_source.source_site}]")
+                    else:
+                        print(f"    → 類似度閾値(20%)未満のため選択なし")
 
             # === 3. 日本語に翻訳してGoogle Shopping検索 ===
             if not best_source and serpapi_client.is_enabled:
-                print(f"  [Step 3] Trying Japanese search...")
+                print(f"  [Step 3] Google Shopping検索 (日本語翻訳)")
 
                 # まずタイトルを整形してからGeminiで翻訳（ノイズを減らす）
                 cleaned_title = clean_query_for_shopping(ebay_title) if ebay_title else ""
+                print(f"    整形後タイトル: {cleaned_title[:60]}...")
 
                 # Geminiで翻訳
                 gemini_client = GeminiClient()
@@ -572,21 +620,28 @@ def main():
                 if gemini_client.is_enabled and cleaned_title:
                     japanese_query = gemini_client.translate_product_name(cleaned_title)
                     if japanese_query:
-                        print(f"  [Gemini] Translated: {japanese_query}")
+                        print(f"    Gemini翻訳結果: {japanese_query}")
+                    else:
+                        print(f"    Gemini翻訳失敗")
+                else:
+                    print(f"    Gemini無効 (APIキー未設定?)")
 
                 # 翻訳失敗時は型番抽出
                 if not japanese_query:
                     japanese_query = extract_search_keywords(ebay_title) if ebay_title else keyword
-                    print(f"  [INFO] Using extracted keywords: {japanese_query}")
+                    print(f"    フォールバック（型番抽出）: {japanese_query}")
 
                 # 日本語で検索
-                print(f"  [Step 3] Google Shopping (Japanese): {japanese_query}")
+                print(f"    検索クエリ: {japanese_query}")
                 shopping_results = serpapi_client.search_google_shopping_jp(japanese_query, max_results=10)
 
                 all_sources = []
+                google_url_skipped = 0
+                no_price_skipped = 0
                 for shop_item in shopping_results:
                     # google.comのURLはスキップ（実際の商品ページではない）
                     if "google.com" in shop_item.link:
+                        google_url_skipped += 1
                         continue
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
@@ -601,13 +656,16 @@ def main():
                             stock_hint="",
                             title=shop_item.title,
                         ))
+                    else:
+                        no_price_skipped += 1
 
-                print(f"  [Step 3] Found {len(all_sources)} items (valid URLs)")
+                print(f"    結果: {len(shopping_results)}件取得 → {len(all_sources)}件有効 (google.comスキップ: {google_url_skipped}件, 価格無し: {no_price_skipped}件)")
 
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
-                    print(f"  [Step 3b] Shopping 0 results, trying Web search...")
+                    print(f"  [Step 3b] Shopping結果なし → Web検索フォールバック")
                     web_condition = "new" if condition == "New" else "used"
+                    print(f"    condition: {web_condition}")
                     web_results = serpapi_client.search_google_web_jp(japanese_query, condition=web_condition, max_results=10)
 
                     for shop_item in web_results:
@@ -620,12 +678,34 @@ def main():
                             title=shop_item.title,
                         ))
 
-                    print(f"  [Step 3b] Found {len(all_sources)} items via Web search")
+                    priced = len([s for s in all_sources if s.source_price_jpy > 0])
+                    print(f"    結果: {len(web_results)}件取得 → {len(all_sources)}件有効 (価格あり: {priced}件)")
 
                 if all_sources:
+                    # 候補一覧を表示（スコア付き）
+                    print(f"    --- 候補一覧 (スコア順) ---")
+                    scored_sources = []
+                    for src in all_sources:
+                        sim = calculate_title_similarity(ebay_title, src.title)
+                        cond = calculate_condition_score(src.title, src.source_site)
+                        prio = calculate_source_priority(src.source_site)
+                        total = sim * cond * prio
+                        scored_sources.append((src, sim, cond, prio, total))
+                    scored_sources.sort(key=lambda x: x[4], reverse=True)
+
+                    for i, (src, sim, cond, prio, total) in enumerate(scored_sources[:5]):
+                        price_str = f"JPY {src.source_price_jpy:,.0f}" if src.source_price_jpy > 0 else "価格不明"
+                        prio_label = "仕入" if prio >= 0.9 else "相場" if prio <= 0.6 else "中"
+                        print(f"    {i+1}. [{src.source_site}] {price_str}")
+                        print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
+                        print(f"       {src.title[:50]}...")
+
                     best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
                     if best_source:
                         search_method = "日本語検索"
+                        print(f"    → 選択: [{best_source.source_site}]")
+                    else:
+                        print(f"    → 類似度閾値(20%)未満のため選択なし")
 
             # 結果判定
             error_reason = None

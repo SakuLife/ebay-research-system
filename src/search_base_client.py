@@ -24,7 +24,8 @@ class SearchBaseClient:
         weight_g: Optional[float] = None,
         depth_cm: Optional[float] = None,
         width_cm: Optional[float] = None,
-        height_cm: Optional[float] = None
+        height_cm: Optional[float] = None,
+        category_id: Optional[str] = None
     ) -> bool:
         """
         検索ベースシート10行目（B10:M10）に入力データを書き込む.
@@ -99,7 +100,11 @@ class SearchBaseClient:
             worksheet.update(range_name="K9", values=[[ebay_url]], value_input_option='USER_ENTERED')
             print(f"  [検索ベース] K9 ← {ebay_url}")
 
-            # L9, M9: 空欄のまま
+            # K11: カテゴリNo
+            if category_id:
+                worksheet.update(range_name="K11", values=[[category_id]], value_input_option='USER_ENTERED')
+                print(f"  [検索ベース] K11 ← {category_id} （カテゴリNo）")
+
             print(f"  [検索ベース] === 書き込み完了 ===")
             return True
 

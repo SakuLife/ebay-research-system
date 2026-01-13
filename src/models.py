@@ -15,6 +15,8 @@ class ListingCandidate:
     sold_signal: int
     category_id: str = ""
     category_name: str = ""
+    ebay_title: str = ""
+    currency: str = "USD"
 
 
 @dataclass
@@ -24,6 +26,7 @@ class SourceOffer:
     source_price_jpy: float
     source_shipping_jpy: float
     stock_hint: str
+    title: str = ""
 
 
 @dataclass

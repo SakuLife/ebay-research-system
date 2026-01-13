@@ -15,24 +15,23 @@ const INPUT_SHEET_NAME = '入力シート'; // 入力シートの名前
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('リサーチツール')
-    .addItem('【Pattern②】自動リサーチ実行', 'runAutoResearch')
+    .addItem('自動リサーチ実行', 'runAutoResearch')
     .addSeparator()
-    .addItem('【Pattern①】選択行を実行', 'runResearchForSelectedRow')
-    .addSeparator()
-    .addItem('設定', 'showSettings')
+    .addItem('設定確認', 'showSettings')
     .addToUi();
 }
 
 /**
- * 【Pattern②】自動リサーチを実行
- * 設定シートのキーワードを使って自動リサーチ
+ * 自動リサーチを実行
+ * 設定シートのキーワード×修飾語で自動リサーチ
  */
 function runAutoResearch() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
 
   // GitHub Tokenの設定チェック
   if (GITHUB_TOKEN === 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN') {
-    SpreadsheetApp.getUi().alert(
+    ui.alert(
       'エラー: GitHub Personal Access Tokenが設定されていません。\n\n' +
       'スクリプトエディタを開き、GITHUB_TOKENを設定してください。'
     );
@@ -42,35 +41,81 @@ function runAutoResearch() {
   // 設定シートの存在確認
   let settingsSheet = ss.getSheetByName('設定＆キーワード');
   if (!settingsSheet) {
-    SpreadsheetApp.getUi().alert(
+    ui.alert(
       'エラー: 「設定＆キーワード」シートが見つかりません。\n\n' +
       'シートを作成してから再度実行してください。'
     );
     return;
   }
 
-  // A列のキーワードを取得（9行目以降がキーワード）
-  const keywords = settingsSheet.getRange('A10:A').getValues()
-    .map(row => row[0])
-    .filter(keyword => keyword && keyword.toString().trim() !== '' && !keyword.toString().startsWith('【'));
+  // === 設定値を読み取り ===
+  const market = settingsSheet.getRange('B4').getValue() || 'UK';
+  const period = settingsSheet.getRange('B5').getValue() || '90日';
+  const minPrice = settingsSheet.getRange('B6').getValue() || '100';
+  const minProfit = settingsSheet.getRange('B7').getValue() || 'フィルターなし';
+  const itemsPerKeyword = settingsSheet.getRange('B8').getValue() || '5';
+  const minSold = settingsSheet.getRange('B9').getValue() || '0';
+
+  // === キーワードと修飾語を読み取り ===
+  const keywordData = settingsSheet.getRange('E4:F100').getValues();
+
+  const keywords = [];
+  const modifiers = [];
+
+  for (let i = 0; i < keywordData.length; i++) {
+    const kw = keywordData[i][0] ? keywordData[i][0].toString().trim() : '';
+    const mod = keywordData[i][1] ? keywordData[i][1].toString().trim() : '';
+
+    if (kw && !kw.startsWith('【') && keywords.indexOf(kw) === -1) {
+      keywords.push(kw);
+    }
+    if (mod && modifiers.indexOf(mod) === -1) {
+      modifiers.push(mod);
+    }
+  }
 
   if (keywords.length === 0) {
-    SpreadsheetApp.getUi().alert(
+    ui.alert(
       'キーワードが設定されていません。\n\n' +
-      '「設定」シートのA列にキーワードを入力してください。'
+      '「設定＆キーワード」シートのE列にキーワードを入力してください。'
     );
     return;
   }
 
-  // 確認ダイアログ
-  const ui = SpreadsheetApp.getUi();
-  const response = ui.alert(
-    '自動リサーチを実行しますか？',
-    `${keywords.length}個のキーワードで自動リサーチを実行します。\n\n` +
-    `キーワード:\n${keywords.slice(0, 5).join('\n')}${keywords.length > 5 ? '\n...' : ''}\n\n` +
-    '処理には数分かかる場合があります。',
-    ui.ButtonSet.OK_CANCEL
-  );
+  // === 検索パターン数を計算 ===
+  const patternCount = modifiers.length > 0 ? keywords.length * modifiers.length : keywords.length;
+  const totalItems = patternCount * parseInt(itemsPerKeyword);
+
+  // === 確認メッセージを作成 ===
+  let confirmMessage = '';
+  confirmMessage += '【検索設定】\n';
+  confirmMessage += `  マーケット: ${market}\n`;
+  confirmMessage += `  最低価格: $${minPrice}\n`;
+  confirmMessage += `  最低利益: ${minProfit}\n`;
+  confirmMessage += `  最小販売数: ${minSold}\n`;
+  confirmMessage += '\n';
+
+  confirmMessage += '【キーワード】 ' + keywords.length + '個\n';
+  confirmMessage += '  ' + keywords.slice(0, 3).join(', ');
+  if (keywords.length > 3) confirmMessage += ' ...';
+  confirmMessage += '\n\n';
+
+  if (modifiers.length > 0) {
+    confirmMessage += '【修飾語】 ' + modifiers.length + '個\n';
+    confirmMessage += '  ' + modifiers.slice(0, 5).join(', ');
+    if (modifiers.length > 5) confirmMessage += ' ...';
+    confirmMessage += '\n\n';
+  }
+
+  confirmMessage += '【検索規模】\n';
+  confirmMessage += `  検索パターン: ${patternCount}パターン\n`;
+  confirmMessage += `  （${keywords.length}キーワード × ${modifiers.length || 1}修飾語）\n`;
+  confirmMessage += `  各パターン商品数: ${itemsPerKeyword}個\n`;
+  confirmMessage += `  最大出力行数: ${totalItems}行\n`;
+  confirmMessage += '\n';
+  confirmMessage += '処理には数分かかる場合があります。';
+
+  const response = ui.alert('自動リサーチを実行しますか？', confirmMessage, ui.ButtonSet.OK_CANCEL);
 
   if (response !== ui.Button.OK) {
     return;
@@ -80,14 +125,14 @@ function runAutoResearch() {
   const result = triggerAutoResearchGitHubActions();
 
   if (result.success) {
-    SpreadsheetApp.getUi().alert(
+    ui.alert(
       '自動リサーチを開始しました。\n\n' +
-      `キーワード数: ${keywords.length}個\n` +
-      '完了まで数分かかります。\n\n' +
+      `検索パターン: ${patternCount}パターン\n` +
+      `最大出力行数: ${totalItems}行\n\n` +
       '結果は「入力シート」に追加されます。'
     );
   } else {
-    SpreadsheetApp.getUi().alert(
+    ui.alert(
       'GitHub Actionsの起動に失敗しました。\n\n' +
       'エラー詳細:\n' + result.error + '\n\n' +
       '確認事項:\n' +
@@ -99,67 +144,7 @@ function runAutoResearch() {
 }
 
 /**
- * 【Pattern①】選択されている行のリサーチを実行
- */
-function runResearchForSelectedRow() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(INPUT_SHEET_NAME);
-  const activeRow = sheet.getActiveCell().getRow();
-
-  // ヘッダー行（1行目）は除外
-  if (activeRow === 1) {
-    SpreadsheetApp.getUi().alert('ヘッダー行は実行できません。データ行を選択してください。');
-    return;
-  }
-
-  // GitHub Tokenの設定チェック
-  if (GITHUB_TOKEN === 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN') {
-    SpreadsheetApp.getUi().alert(
-      'エラー: GitHub Personal Access Tokenが設定されていません。\n\n' +
-      'スクリプトエディタを開き、GITHUB_TOKENを設定してください。'
-    );
-    return;
-  }
-
-  // B列のeBay URLを取得
-  const ebayUrl = sheet.getRange(activeRow, 2).getValue(); // B列 = 2
-
-  if (!ebayUrl) {
-    SpreadsheetApp.getUi().alert('B列にeBay URLが入力されていません。');
-    return;
-  }
-
-  // ステータスを「処理中」に更新
-  const statusCol = 19; // S列 = 19
-  sheet.getRange(activeRow, statusCol).setValue('処理中');
-
-  // GitHub Actionsを実行
-  const result = triggerGitHubActions(ebayUrl, activeRow);
-
-  if (result.success) {
-    SpreadsheetApp.getUi().alert(
-      'リサーチを開始しました。\n' +
-      '完了まで2-3分かかります。\n\n' +
-      '行番号: ' + activeRow + '\n' +
-      'eBay URL: ' + ebayUrl
-    );
-  } else {
-    sheet.getRange(activeRow, statusCol).setValue('エラー');
-    const memoCol = 20; // T列 = 20
-    sheet.getRange(activeRow, memoCol).setValue('GitHub Actions起動失敗: ' + result.error);
-
-    SpreadsheetApp.getUi().alert(
-      'GitHub Actionsの起動に失敗しました。\n\n' +
-      'エラー詳細:\n' + result.error + '\n\n' +
-      '確認事項:\n' +
-      '1. GitHub Personal Access Tokenが正しく設定されているか\n' +
-      '2. トークンに「repo」権限があるか\n' +
-      '3. リポジトリ名が正しいか: ' + GITHUB_OWNER + '/' + GITHUB_REPO
-    );
-  }
-}
-
-/**
- * 【Pattern②】GitHub Actionsをトリガー（自動リサーチ用）
+ * GitHub Actionsをトリガー（自動リサーチ用）
  */
 function triggerAutoResearchGitHubActions() {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`;
@@ -210,70 +195,6 @@ function triggerAutoResearchGitHubActions() {
       }
 
       Logger.log('Auto Research GitHub Actions trigger failed: ' + errorMessage);
-      return { success: false, error: errorMessage };
-    }
-  } catch (error) {
-    const errorMessage = 'ネットワークエラー: ' + error.toString();
-    Logger.log('Error: ' + errorMessage);
-    return { success: false, error: errorMessage };
-  }
-}
-
-/**
- * 【Pattern①】GitHub Actionsをトリガー
- */
-function triggerGitHubActions(ebayUrl, rowNumber) {
-  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`;
-
-  const payload = {
-    'event_type': 'research_request',
-    'client_payload': {
-      'ebay_url': ebayUrl,
-      'row_number': rowNumber
-    }
-  };
-
-  const options = {
-    'method': 'post',
-    'headers': {
-      'Authorization': 'token ' + GITHUB_TOKEN,
-      'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json'
-    },
-    'payload': JSON.stringify(payload),
-    'muteHttpExceptions': true
-  };
-
-  try {
-    Logger.log('Triggering GitHub Actions...');
-    Logger.log('URL: ' + url);
-    Logger.log('Payload: ' + JSON.stringify(payload));
-
-    const response = UrlFetchApp.fetch(url, options);
-    const responseCode = response.getResponseCode();
-    const responseBody = response.getContentText();
-
-    Logger.log('GitHub API Response Code: ' + responseCode);
-    Logger.log('GitHub API Response Body: ' + responseBody);
-
-    if (responseCode === 204) {
-      return { success: true }; // 成功
-    } else {
-      // エラーレスポンスをパース
-      let errorMessage = 'HTTPステータス: ' + responseCode;
-      try {
-        const errorData = JSON.parse(responseBody);
-        if (errorData.message) {
-          errorMessage += '\nメッセージ: ' + errorData.message;
-        }
-        if (errorData.documentation_url) {
-          errorMessage += '\nドキュメント: ' + errorData.documentation_url;
-        }
-      } catch (e) {
-        errorMessage += '\nレスポンス: ' + responseBody;
-      }
-
-      Logger.log('GitHub Actions trigger failed: ' + errorMessage);
       return { success: false, error: errorMessage };
     }
   } catch (error) {

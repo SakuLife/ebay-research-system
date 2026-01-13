@@ -139,17 +139,18 @@ class GoogleSheetsClient:
         try:
             worksheet = self.spreadsheet.worksheet("設定＆キーワード")
 
-            # Basic settings (B4-B8)
+            # Basic settings (B4-B9)
             market = worksheet.acell('B4').value or "UK"
             period = worksheet.acell('B5').value or "90日"
             min_price = worksheet.acell('B6').value or "100"
             min_profit = worksheet.acell('B7').value or "フィルターなし"
             items_per_keyword = worksheet.acell('B8').value or "5"
+            min_sold = worksheet.acell('B9').value or "0"
 
-            # Weight settings (B11-B13) - shifted by 1 due to items_per_keyword row
-            default_weight = worksheet.acell('B11').value or "自動推定"
-            packaging_weight = worksheet.acell('B12').value or "500"
-            size_multiplier = worksheet.acell('B13').value or "1.0"
+            # Weight settings (B13-B15) - after min_sold row and empty row
+            default_weight = worksheet.acell('B13').value or "自動推定"
+            packaging_weight = worksheet.acell('B14').value or "500"
+            size_multiplier = worksheet.acell('B15').value or "1.0"
 
             return {
                 "market": market,
@@ -157,6 +158,7 @@ class GoogleSheetsClient:
                 "min_price": min_price,
                 "min_profit": min_profit,
                 "items_per_keyword": items_per_keyword,
+                "min_sold": min_sold,
                 "default_weight": default_weight,
                 "packaging_weight": packaging_weight,
                 "size_multiplier": size_multiplier
@@ -169,6 +171,7 @@ class GoogleSheetsClient:
                 "min_price": "100",
                 "min_profit": "フィルターなし",
                 "items_per_keyword": "5",
+                "min_sold": "0",
                 "default_weight": "自動推定",
                 "packaging_weight": "500",
                 "size_multiplier": "1.0"

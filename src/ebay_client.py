@@ -241,7 +241,13 @@ class EbayClient:
                 print(f"  [INFO] Item {item_id} not found (may be sold/removed)")
             return None
 
-    def search_active_listings(self, keyword: str, market: str = "UK", min_price_usd: float = 0) -> List[ListingCandidate]:
+    def search_active_listings(
+        self,
+        keyword: str,
+        market: str = "UK",
+        min_price_usd: float = 0,
+        min_sold: int = 0
+    ) -> List[ListingCandidate]:
         """
         Search active listings using eBay Browse API.
 
@@ -251,6 +257,8 @@ class EbayClient:
         Args:
             keyword: Search keyword
             market: Market (UK, US, EU) - default UK
+            min_price_usd: Minimum price in USD
+            min_sold: Minimum sold quantity (requires extra API calls per item)
 
         Returns:
             List of ListingCandidate with active items
@@ -340,6 +348,8 @@ class EbayClient:
 
                     # Code-level price filter (compare in USD)
                     if min_price_usd > 0 and price < min_price_usd:
+                        # Debug log for filtered items
+                        # print(f"  [DEBUG] Filtered: {currency} {price_local:.2f} = ${price:.2f} < ${min_price_usd}")
                         continue  # Skip items below min price
 
                     # Get shipping cost (if available)
@@ -370,6 +380,8 @@ class EbayClient:
                         sold_signal=sold_signal,
                         category_id=category_id,
                         category_name=category_name,
+                        ebay_title=title,
+                        currency=currency,
                     )
                     candidates.append(candidate)
 
@@ -382,6 +394,58 @@ class EbayClient:
                     continue
 
             print(f"  [INFO] Found {len(candidates)} active listings for '{keyword}'")
+
+            # Apply min_sold filter if specified (requires extra API calls)
+            if min_sold > 0 and candidates:
+                print(f"  [INFO] Filtering by min_sold >= {min_sold}...")
+                filtered_candidates = []
+
+                for candidate in candidates:
+                    # Extract itemId from URL or use legacyItemId
+                    item_url = candidate.ebay_item_url
+                    # Try to get sold quantity from item details
+                    try:
+                        # Extract legacy item ID from URL
+                        import re
+                        match = re.search(r'/itm/(\d+)', item_url)
+                        if match:
+                            legacy_id = match.group(1)
+                            item_id = f"v1|{legacy_id}|0"
+
+                            # Get item details
+                            item_url_api = f"https://api.ebay.com/buy/browse/v1/item/{item_id}"
+                            item_resp = requests.get(item_url_api, headers=headers)
+
+                            if item_resp.status_code == 200:
+                                item_data = item_resp.json()
+                                availabilities = item_data.get("estimatedAvailabilities", [])
+                                if availabilities:
+                                    sold_qty = availabilities[0].get("estimatedSoldQuantity", 0)
+                                    candidate.sold_signal = sold_qty
+
+                                    if sold_qty >= min_sold:
+                                        filtered_candidates.append(candidate)
+                                        print(f"    [OK] {candidate.ebay_title[:40]}... (Sold: {sold_qty})")
+                                    else:
+                                        print(f"    [SKIP] {candidate.ebay_title[:40]}... (Sold: {sold_qty} < {min_sold})")
+                                else:
+                                    # No availability info, skip
+                                    pass
+                            else:
+                                # API error, include anyway
+                                filtered_candidates.append(candidate)
+
+                            # Rate limiting
+                            import time
+                            time.sleep(0.1)
+
+                    except Exception as e:
+                        print(f"    [WARN] Failed to get sold qty: {e}")
+                        filtered_candidates.append(candidate)
+
+                print(f"  [INFO] After sold filter: {len(filtered_candidates)} items")
+                return filtered_candidates
+
             return candidates
 
         except requests.exceptions.RequestException as e:

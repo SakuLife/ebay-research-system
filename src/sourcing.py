@@ -186,12 +186,14 @@ class RakutenClient:
         price = float(item.get("itemPrice", 0))
         url = item.get("itemUrl", "")
         availability = item.get("availability", 0)
+        item_name = item.get("itemName", "")
         return SourceOffer(
             source_site="Rakuten",
             source_url=url,
             source_price_jpy=price,
             source_shipping_jpy=0.0,
             stock_hint="in_stock" if availability == 1 else "unknown",
+            title=item_name,
         )
 
     def search_multiple(self, keyword: str, max_results: int = 5) -> List[SourceOffer]:
@@ -228,6 +230,7 @@ class RakutenClient:
             price = float(item.get("itemPrice", 0))
             url = item.get("itemUrl", "")
             availability = item.get("availability", 0)
+            item_name = item.get("itemName", "")
 
             if price > 0 and url:
                 offers.append(SourceOffer(
@@ -236,6 +239,7 @@ class RakutenClient:
                     source_price_jpy=price,
                     source_shipping_jpy=0.0,
                     stock_hint="in_stock" if availability == 1 else "unknown",
+                    title=item_name,
                 ))
 
         # Sort by price and return top N
@@ -351,6 +355,7 @@ class AmazonPaapiClient:
             return None
         item = items[0]
         detail_url = item.get("DetailPageURL", "")
+        item_title = item.get("ItemInfo", {}).get("Title", {}).get("DisplayValue", "")
         price_info = (
             item.get("Offers", {})
             .get("Listings", [{}])[0]
@@ -365,6 +370,7 @@ class AmazonPaapiClient:
             source_price_jpy=float(amount),
             source_shipping_jpy=0.0,
             stock_hint="unknown",
+            title=item_title,
         )
 
     def search_multiple(self, keyword: str, max_results: int = 5) -> List[SourceOffer]:
@@ -404,6 +410,7 @@ class AmazonPaapiClient:
         offers = []
         for item in items:
             detail_url = item.get("DetailPageURL", "")
+            item_title = item.get("ItemInfo", {}).get("Title", {}).get("DisplayValue", "")
             price_info = (
                 item.get("Offers", {})
                 .get("Listings", [{}])[0]
@@ -418,6 +425,7 @@ class AmazonPaapiClient:
                     source_price_jpy=float(amount),
                     source_shipping_jpy=0.0,
                     stock_hint="unknown",
+                    title=item_title,
                 ))
 
         # Sort by price and return top N

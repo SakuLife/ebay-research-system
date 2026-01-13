@@ -23,6 +23,32 @@ from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shoppin
 from .gemini_client import GeminiClient
 
 
+def clean_keyword_for_ebay(keyword: str) -> str:
+    """
+    キーワードをeBay検索用にクリーニングする.
+    - 日本語（ひらがな・カタカナ・漢字）を除去
+    - 括弧とその中身を除去
+    - 余分なスペースを整理
+
+    例: "HIKOKI（ハイコーキ）" → "HIKOKI"
+        "Haikyu!!（ハイキュー）" → "Haikyu!!"
+    """
+    if not keyword:
+        return ""
+
+    # 括弧（全角・半角）とその中身を除去
+    # （...）, (...), 【...】, [...] など
+    cleaned = re.sub(r'[（(【\[][^）)\]】]*[）)\]】]', '', keyword)
+
+    # 日本語文字を除去（ひらがな、カタカナ、漢字）
+    cleaned = re.sub(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]+', '', cleaned)
+
+    # 複数スペースを1つに、前後のスペースを除去
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+    return cleaned
+
+
 def extract_search_keywords(ebay_title: str) -> str:
     """
     eBayタイトルから日本の仕入先検索用のキーワードを抽出する。
@@ -433,9 +459,18 @@ def main():
     total_processed = 0
     total_profitable = 0
 
-    for keyword in keywords:
+    for raw_keyword in keywords:
+        # キーワードをクリーニング（日本語・括弧を除去）
+        keyword = clean_keyword_for_ebay(raw_keyword)
+        if not keyword:
+            print(f"\n[SKIP] Empty keyword after cleaning: '{raw_keyword}'")
+            continue
+
         print(f"\n{'='*60}")
-        print(f"Processing keyword: {keyword}")
+        if keyword != raw_keyword:
+            print(f"Processing keyword: {raw_keyword} → {keyword}")
+        else:
+            print(f"Processing keyword: {keyword}")
         print(f"{'='*60}")
 
         # Step 3: Search eBay sold items

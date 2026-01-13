@@ -133,13 +133,49 @@ def extract_search_keywords(ebay_title: str) -> str:
     return ' '.join(result_parts[:5])
 
 
+def extract_model_numbers(text: str) -> set:
+    """
+    テキストから型番を抽出する。
+    工具、カード、フィギュア等の型番パターンに対応。
+    """
+    model_numbers = set()
+
+    # 型番パターン（例: NV65HR2, G3618DA, RX-78-2, MG-100）
+    patterns = [
+        r'\b([A-Z]{1,3}\d{2,5}[A-Z0-9]*)\b',  # NV65HR2, G3618DA
+        r'\b([A-Z]{1,4}-\d{1,5}[-A-Z0-9]*)\b',  # RX-78-2, MG-100
+        r'\b(\d{3}/\d{3})\b',  # カード番号 217/187
+    ]
+
+    text_upper = text.upper()
+    for pattern in patterns:
+        matches = re.findall(pattern, text_upper)
+        model_numbers.update(matches)
+
+    return model_numbers
+
+
 def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
     """
     eBayタイトルと仕入先タイトルの類似度を計算する。
-    共通キーワードの割合を返す（0.0〜1.0）。
+    型番一致を最重視し、共通キーワードも加味する（0.0〜1.0+）。
+
+    型番が一致すれば +0.3 のボーナス（最大1.0を超えることもある）
     """
     if not ebay_title or not source_title:
         return 0.0
+
+    # 型番抽出
+    ebay_models = extract_model_numbers(ebay_title)
+    source_models = extract_model_numbers(source_title)
+
+    # 型番一致ボーナス
+    model_bonus = 0.0
+    if ebay_models and source_models:
+        common_models = ebay_models & source_models
+        if common_models:
+            # 型番が1つでも一致すれば大幅ボーナス
+            model_bonus = 0.3 * len(common_models)  # 複数一致でさらにボーナス
 
     # 正規化: 小文字化、記号除去
     def normalize(text: str) -> set:
@@ -152,15 +188,105 @@ def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
     source_words = normalize(source_title)
 
     if not ebay_words or not source_words:
-        return 0.0
+        return model_bonus  # 型番ボーナスのみ
 
     # 共通キーワード数
     common = ebay_words & source_words
 
-    # 類似度 = 共通キーワード数 / min(両方のキーワード数)
-    similarity = len(common) / min(len(ebay_words), len(source_words))
+    # 基本類似度 = 共通キーワード数 / min(両方のキーワード数)
+    base_similarity = len(common) / min(len(ebay_words), len(source_words))
 
-    return similarity
+    # 型番ボーナスを加算
+    total_similarity = base_similarity + model_bonus
+
+    return total_similarity
+
+
+# 許可する日本のECサイト（ホワイトリスト方式）
+# これに含まれないサイト（海外Amazon等）は除外
+ALLOWED_JAPANESE_DOMAINS = [
+    # 大手EC
+    "amazon.co.jp",
+    "rakuten.co.jp",
+    "shopping.yahoo.co.jp",
+    # 家電量販店
+    "yodobashi.com",
+    "biccamera.com",
+    "joshin.co.jp",
+    "nojima.co.jp",
+    "edion.com",
+    "ksdenki.com",
+    "yamada-denki",
+    "kojima.net",
+    # ホビー・カード
+    "suruga-ya.jp",
+    "amiami.jp",
+    "hobby-wave",
+    "goodsmile",
+    "cardotaku",
+    # 工具・DIY
+    "komeri.com",
+    "cainz.com",
+    "kohnan-eshop",
+    "dcm-ekurashi",
+    "monotaro.com",
+    "hikoki-powertools.jp",
+    "makita-shop",
+    # その他
+    "askul.co.jp",
+    "lohaco.jp",
+]
+
+# 除外すべきURL・ドメインパターン
+EXCLUDED_URL_PATTERNS = [
+    ".pdf",           # PDFファイル
+    "/pdf/",
+    "amazon.com",     # アメリカ
+    "amazon.co.uk",   # イギリス
+    "amazon.de",      # ドイツ
+    "amazon.fr",      # フランス
+    "amazon.it",      # イタリア
+    "amazon.es",      # スペイン
+    "amazon.nl",      # オランダ
+    "amazon.ca",      # カナダ
+    "amazon.com.au",  # オーストラリア
+    "ebay.com",       # eBay
+    "ebay.co.uk",
+    "aliexpress",     # AliExpress（中国仕入れは別検討）
+    "alibaba",
+    "wish.com",
+]
+
+
+def is_allowed_source_url(url: str) -> bool:
+    """
+    URLが許可された日本のECサイトかどうか判定する.
+
+    Returns:
+        True: 許可されたサイト
+        False: 除外すべきサイト（海外Amazon、PDF等）
+    """
+    if not url:
+        return False
+
+    url_lower = url.lower()
+
+    # 除外パターンに一致したらNG
+    for pattern in EXCLUDED_URL_PATTERNS:
+        if pattern in url_lower:
+            return False
+
+    # 許可リストに一致したらOK
+    for domain in ALLOWED_JAPANESE_DOMAINS:
+        if domain in url_lower:
+            return True
+
+    # どちらにも一致しない場合：
+    # .jpドメインなら許可（未知の日本サイト）
+    if ".co.jp" in url_lower or ".jp/" in url_lower:
+        return True
+
+    return False
 
 
 # 仕入れ優先サイト（再現性が高い、在庫がある）
@@ -312,13 +438,19 @@ def find_best_matching_source(
 
     best_source = None
     best_score = 0.0
+    excluded_urls = 0
 
     for source in sources:
+        # 許可されていないURL（海外Amazon、PDF等）は除外
+        if not is_allowed_source_url(source.source_url):
+            excluded_urls += 1
+            continue
+
         # 価格0円は除外（利益計算できない）
         if require_price and source.source_price_jpy <= 0:
             continue
 
-        # 類似度
+        # 類似度（型番一致ボーナス込み）
         similarity = calculate_title_similarity(ebay_title, source.title)
         if similarity < min_similarity:
             continue
@@ -335,6 +467,9 @@ def find_best_matching_source(
         if total_score > best_score:
             best_score = total_score
             best_source = source
+
+    if excluded_urls > 0:
+        print(f"    (海外/PDF除外: {excluded_urls}件)")
 
     return best_source
 

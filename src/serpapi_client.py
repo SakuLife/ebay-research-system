@@ -95,6 +95,8 @@ class SoldItem:
     condition: str = ""
     shipping: str = ""
     thumbnail: str = ""  # 商品サムネイル画像URL
+    category_id: str = ""
+    category_name: str = ""
 
 
 @dataclass
@@ -248,6 +250,18 @@ class SerpApiClient:
                     shipping = item.get("shipping", "")
                     thumbnail = item.get("thumbnail", "")
 
+                    # カテゴリ情報を取得（SerpApiの結果に含まれている場合）
+                    category_id = item.get("category_id", "") or item.get("categoryId", "")
+                    category_name = item.get("category_name", "") or item.get("categoryName", "")
+                    # extensions内にカテゴリがある場合もある
+                    extensions = item.get("extensions", [])
+                    if not category_name and extensions:
+                        # extensionsの最初の要素がカテゴリ名の場合がある
+                        for ext in extensions:
+                            if isinstance(ext, str) and not ext.startswith("Free"):
+                                category_name = ext
+                                break
+
                     sold_items.append(SoldItem(
                         title=title,
                         price=price,
@@ -257,6 +271,8 @@ class SerpApiClient:
                         condition=condition,
                         shipping=shipping,
                         thumbnail=thumbnail,
+                        category_id=category_id,
+                        category_name=category_name,
                     ))
 
                 except Exception as e:

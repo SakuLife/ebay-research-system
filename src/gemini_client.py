@@ -1,13 +1,54 @@
 """Gemini API client for product name translation."""
 
 import os
-from typing import Optional
+import re
+from typing import Optional, List
 
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
+
+
+def extract_model_numbers(title: str) -> List[str]:
+    """
+    タイトルから型番・識別子を正規表現で抽出する.
+    Gemini翻訳で失われがちな情報を保持するため.
+
+    Returns:
+        抽出された型番のリスト
+    """
+    identifiers = []
+
+    # PSA/CGC/BGSグレーディング (PSA 10, CGC 9.5等)
+    grading = re.findall(r'\b(PSA|CGC|BGS|SGC)\s*\d+\.?\d*\b', title, re.IGNORECASE)
+    identifiers.extend(grading)
+
+    # カード番号 (217/187, 025/078等)
+    card_numbers = re.findall(r'\b(\d{2,3}/\d{2,3})\b', title)
+    identifiers.extend(card_numbers)
+
+    # レアリティ (SAR, SR, RR, AR, UR, HR等)
+    rarities = re.findall(r'\b(SAR|SR|RR|AR|UR|HR|SSR|CHR|CSR|S|A|R)\b', title)
+    identifiers.extend(rarities)
+
+    # 型番パターン (MG-100, RX-78-2, V-1234等)
+    model_nums = re.findall(r'\b([A-Z]{1,4}[-]?\d{2,5}[-]?[A-Z0-9]*)\b', title, re.IGNORECASE)
+    # 短すぎるものや年号っぽいものを除外
+    model_nums = [m for m in model_nums if len(m) >= 4 and not re.match(r'^(19|20)\d{2}$', m)]
+    identifiers.extend(model_nums)
+
+    # 重複除去（順序維持）
+    seen = set()
+    unique = []
+    for item in identifiers:
+        upper = item.upper()
+        if upper not in seen:
+            seen.add(upper)
+            unique.append(item)
+
+    return unique
 
 
 class GeminiClient:

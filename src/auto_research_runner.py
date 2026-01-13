@@ -240,6 +240,7 @@ def main():
     min_profit_str = settings.get("min_profit", "フィルターなし")
     items_per_keyword_str = settings.get("items_per_keyword", "5")
     min_sold_str = settings.get("min_sold", "0")
+    condition = settings.get("condition", "New")  # New or Used
 
     # Weight settings
     default_weight = settings.get("default_weight", "自動推定")
@@ -267,6 +268,7 @@ def main():
         min_profit_jpy = int(min_profit_str.replace("円", "").replace(",", ""))
         print(f"  [INFO] Min profit: JPY {min_profit_jpy}")
 
+    print(f"  [INFO] Condition: {condition}")
     print(f"  [INFO] Weight: {default_weight}, Packaging: {packaging_weight_g}g, Size: x{size_multiplier}")
 
     print(f"\n[2/6] Reading keywords from '設定＆キーワード' sheet...")
@@ -322,6 +324,8 @@ def main():
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
+                    category_id=sold_item.category_id,
+                    category_name=sold_item.category_name,
                 ))
 
         if sold_items:
@@ -425,7 +429,9 @@ def main():
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
                     print(f"  [Step 2b] Shopping 0 results, trying Web search...")
-                    web_results = serpapi_client.search_google_web_jp(cleaned_query, max_results=10)
+                    # conditionに応じて検索対象サイトを変更
+                    web_condition = "new" if condition == "New" else "used"
+                    web_results = serpapi_client.search_google_web_jp(cleaned_query, condition=web_condition, max_results=10)
 
                     for shop_item in web_results:
                         # Web検索は価格が取れないことが多いので、URLのみ記録
@@ -490,7 +496,8 @@ def main():
                 # Shoppingが0件の場合、Web検索へフォールバック
                 if not all_sources:
                     print(f"  [Step 3b] Shopping 0 results, trying Web search...")
-                    web_results = serpapi_client.search_google_web_jp(japanese_query, max_results=10)
+                    web_condition = "new" if condition == "New" else "used"
+                    web_results = serpapi_client.search_google_web_jp(japanese_query, condition=web_condition, max_results=10)
 
                     for shop_item in web_results:
                         all_sources.append(SourceOffer(

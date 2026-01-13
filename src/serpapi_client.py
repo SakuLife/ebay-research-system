@@ -111,6 +111,19 @@ class AmazonItem:
 
 
 @dataclass
+class AliExpressItem:
+    """AliExpress商品の情報."""
+    title: str
+    price: float
+    currency: str
+    link: str
+    item_id: str
+    thumbnail: str = ""
+    rating: float = 0.0
+    orders: int = 0  # 注文数
+
+
+@dataclass
 class ShoppingItem:
     """Google Shopping商品の情報."""
     title: str
@@ -403,6 +416,98 @@ class SerpApiClient:
 
         except Exception as e:
             print(f"  [ERROR] SerpApi Amazon request failed: {e}")
+            return []
+
+    def search_aliexpress(
+        self,
+        keyword: str,
+        max_results: int = 10
+    ) -> List[AliExpressItem]:
+        """
+        AliExpressで商品を検索する.
+        中国からの仕入れ先として使用.
+
+        Args:
+            keyword: 検索キーワード（英語推奨）
+            max_results: 最大取得件数
+
+        Returns:
+            AliExpressItemのリスト
+        """
+        if not self.is_enabled:
+            print("  [WARN] SerpApi is not available")
+            return []
+
+        params = {
+            "engine": "aliexpress",
+            "q": keyword,
+            "api_key": self.api_key
+        }
+
+        try:
+            print(f"  [SerpApi] Searching AliExpress: '{keyword}'")
+            search = GoogleSearch(params)
+            results = search.get_dict()
+
+            if "error" in results:
+                print(f"  [ERROR] SerpApi AliExpress error: {results['error']}")
+                return []
+
+            organic = results.get("organic_results", [])
+            print(f"  [SerpApi] Found {len(organic)} AliExpress items")
+
+            items = []
+            for item in organic[:max_results]:
+                try:
+                    title = item.get("title", "")
+                    link = item.get("link", "")
+                    item_id = item.get("product_id", "") or item.get("item_id", "")
+                    thumbnail = item.get("thumbnail", "")
+
+                    # Parse price (USD)
+                    price = 0.0
+                    price_info = item.get("price", {})
+                    if isinstance(price_info, dict):
+                        price = price_info.get("extracted", 0) or price_info.get("value", 0) or 0
+                    elif isinstance(price_info, (int, float)):
+                        price = float(price_info)
+                    elif isinstance(price_info, str):
+                        match = re.search(r'[\d.]+', price_info.replace(',', ''))
+                        if match:
+                            price = float(match.group())
+
+                    # 価格0はスキップ
+                    if price <= 0:
+                        continue
+
+                    # Rating and orders
+                    rating = item.get("rating", 0) or 0
+                    orders = 0
+                    orders_str = item.get("orders", "") or item.get("sold", "")
+                    if orders_str:
+                        match = re.search(r'[\d,]+', str(orders_str).replace(',', ''))
+                        if match:
+                            orders = int(match.group().replace(',', ''))
+
+                    items.append(AliExpressItem(
+                        title=title,
+                        price=price,
+                        currency="USD",
+                        link=link,
+                        item_id=item_id,
+                        thumbnail=thumbnail,
+                        rating=rating,
+                        orders=orders,
+                    ))
+
+                except Exception as e:
+                    print(f"  [WARN] Failed to parse AliExpress item: {e}")
+                    continue
+
+            return items
+
+        except Exception as e:
+            print(f"  [ERROR] SerpApi AliExpress request failed: {e}")
             return []
 
     def _extract_url_from_google_redirect(self, google_url: str) -> Optional[str]:

@@ -23,6 +23,38 @@ from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shoppin
 from .gemini_client import GeminiClient
 
 
+def encode_url_with_japanese(url: str) -> str:
+    """
+    日本語を含むURLを正しくエンコードする.
+    スプレッドシートでリンクとして認識されるようにする.
+
+    例: https://amazon.co.jp/ハイキュー/dp/xxx
+      → https://amazon.co.jp/%E3%83%8F%E3%82%A4%E3%82%AD%E3%83%A5%E3%83%BC/dp/xxx
+    """
+    if not url:
+        return ""
+
+    try:
+        from urllib.parse import urlparse, quote, urlunparse
+
+        parsed = urlparse(url)
+        # パス部分のみエンコード（既にエンコード済みの%は保持）
+        encoded_path = quote(parsed.path, safe='/%')
+        # クエリ部分もエンコード
+        encoded_query = quote(parsed.query, safe='=&%')
+
+        return urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            encoded_path,
+            parsed.params,
+            encoded_query,
+            parsed.fragment
+        ))
+    except Exception:
+        return url  # エラー時は元のURLを返す
+
+
 def clean_keyword_for_ebay(keyword: str) -> str:
     """
     キーワードをeBay検索用にクリーニングする.
@@ -598,7 +630,7 @@ def main():
                         continue
                     all_sources.append(SourceOffer(
                         source_site=shop_item.source,
-                        source_url=shop_item.link,
+                        source_url=encode_url_with_japanese(shop_item.link),
                         source_price_jpy=shop_item.price,
                         source_shipping_jpy=0,
                         stock_hint="画像検索",
@@ -675,7 +707,7 @@ def main():
 
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=shop_item.link,
+                            source_url=encode_url_with_japanese(shop_item.link),
                             source_price_jpy=price_jpy,
                             source_shipping_jpy=0,
                             stock_hint="",
@@ -699,7 +731,7 @@ def main():
                         # Web検索は価格が取れないことが多いので、URLのみ記録
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=shop_item.link,
+                            source_url=encode_url_with_japanese(shop_item.link),
                             source_price_jpy=shop_item.price if shop_item.price > 0 else 0,
                             source_shipping_jpy=0,
                             stock_hint="Web検索",
@@ -785,7 +817,7 @@ def main():
 
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=shop_item.link,
+                            source_url=encode_url_with_japanese(shop_item.link),
                             source_price_jpy=price_jpy,
                             source_shipping_jpy=0,
                             stock_hint="",
@@ -807,7 +839,7 @@ def main():
                     for shop_item in web_results:
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=shop_item.link,
+                            source_url=encode_url_with_japanese(shop_item.link),
                             source_price_jpy=shop_item.price if shop_item.price > 0 else 0,
                             source_shipping_jpy=0,
                             stock_hint="Web検索",

@@ -155,10 +155,95 @@ def extract_model_numbers(text: str) -> set:
     return model_numbers
 
 
+# カタカナ→ローマ字変換テーブル
+KATAKANA_TO_ROMAJI = {
+    'ア': 'a', 'イ': 'i', 'ウ': 'u', 'エ': 'e', 'オ': 'o',
+    'カ': 'ka', 'キ': 'ki', 'ク': 'ku', 'ケ': 'ke', 'コ': 'ko',
+    'サ': 'sa', 'シ': 'shi', 'ス': 'su', 'セ': 'se', 'ソ': 'so',
+    'タ': 'ta', 'チ': 'chi', 'ツ': 'tsu', 'テ': 'te', 'ト': 'to',
+    'ナ': 'na', 'ニ': 'ni', 'ヌ': 'nu', 'ネ': 'ne', 'ノ': 'no',
+    'ハ': 'ha', 'ヒ': 'hi', 'フ': 'fu', 'ヘ': 'he', 'ホ': 'ho',
+    'マ': 'ma', 'ミ': 'mi', 'ム': 'mu', 'メ': 'me', 'モ': 'mo',
+    'ヤ': 'ya', 'ユ': 'yu', 'ヨ': 'yo',
+    'ラ': 'ra', 'リ': 'ri', 'ル': 'ru', 'レ': 're', 'ロ': 'ro',
+    'ワ': 'wa', 'ヲ': 'wo', 'ン': 'n',
+    'ガ': 'ga', 'ギ': 'gi', 'グ': 'gu', 'ゲ': 'ge', 'ゴ': 'go',
+    'ザ': 'za', 'ジ': 'ji', 'ズ': 'zu', 'ゼ': 'ze', 'ゾ': 'zo',
+    'ダ': 'da', 'ヂ': 'di', 'ヅ': 'du', 'デ': 'de', 'ド': 'do',
+    'バ': 'ba', 'ビ': 'bi', 'ブ': 'bu', 'ベ': 'be', 'ボ': 'bo',
+    'パ': 'pa', 'ピ': 'pi', 'プ': 'pu', 'ペ': 'pe', 'ポ': 'po',
+    'キャ': 'kya', 'キュ': 'kyu', 'キョ': 'kyo',
+    'シャ': 'sha', 'シュ': 'shu', 'ショ': 'sho',
+    'チャ': 'cha', 'チュ': 'chu', 'チョ': 'cho',
+    'ニャ': 'nya', 'ニュ': 'nyu', 'ニョ': 'nyo',
+    'ヒャ': 'hya', 'ヒュ': 'hyu', 'ヒョ': 'hyo',
+    'ミャ': 'mya', 'ミュ': 'myu', 'ミョ': 'myo',
+    'リャ': 'rya', 'リュ': 'ryu', 'リョ': 'ryo',
+    'ギャ': 'gya', 'ギュ': 'gyu', 'ギョ': 'gyo',
+    'ジャ': 'ja', 'ジュ': 'ju', 'ジョ': 'jo',
+    'ビャ': 'bya', 'ビュ': 'byu', 'ビョ': 'byo',
+    'ピャ': 'pya', 'ピュ': 'pyu', 'ピョ': 'pyo',
+    'ァ': 'a', 'ィ': 'i', 'ゥ': 'u', 'ェ': 'e', 'ォ': 'o',
+    'ッ': '', 'ー': '',
+}
+
+# ひらがな→カタカナ変換用オフセット
+HIRAGANA_TO_KATAKANA_OFFSET = ord('ア') - ord('あ')
+
+
+def katakana_to_romaji(text: str) -> str:
+    """カタカナをローマ字に変換する."""
+    result = []
+    i = 0
+    while i < len(text):
+        # 2文字の拗音を先にチェック
+        if i + 1 < len(text):
+            two_char = text[i:i+2]
+            if two_char in KATAKANA_TO_ROMAJI:
+                result.append(KATAKANA_TO_ROMAJI[two_char])
+                i += 2
+                continue
+        # 1文字
+        char = text[i]
+        if char in KATAKANA_TO_ROMAJI:
+            result.append(KATAKANA_TO_ROMAJI[char])
+        else:
+            result.append(char)
+        i += 1
+    return ''.join(result)
+
+
+def hiragana_to_katakana(text: str) -> str:
+    """ひらがなをカタカナに変換する."""
+    result = []
+    for char in text:
+        if 'あ' <= char <= 'ん':
+            result.append(chr(ord(char) + HIRAGANA_TO_KATAKANA_OFFSET))
+        else:
+            result.append(char)
+    return ''.join(result)
+
+
+def normalize_to_romaji(text: str) -> str:
+    """
+    テキストを正規化してローマ字に統一する.
+    ひらがな・カタカナ → ローマ字に変換し、小文字に統一.
+    """
+    # ひらがな → カタカナ
+    text = hiragana_to_katakana(text)
+    # カタカナ → ローマ字
+    text = katakana_to_romaji(text)
+    # 小文字化
+    return text.lower()
+
+
 def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
     """
     eBayタイトルと仕入先タイトルの類似度を計算する。
     型番一致を最重視し、共通キーワードも加味する（0.0〜1.0+）。
+    日本語（カタカナ・ひらがな）と英語のローマ字表記も比較可能。
+
+    例: "Dedede De Pupupu" ↔ "デデデでプププ" → 一致判定
 
     型番が一致すれば +0.3 のボーナス（最大1.0を超えることもある）
     """
@@ -177,29 +262,52 @@ def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
             # 型番が1つでも一致すれば大幅ボーナス
             model_bonus = 0.3 * len(common_models)  # 複数一致でさらにボーナス
 
-    # 正規化: 小文字化、記号除去
-    def normalize(text: str) -> set:
-        # 英数字とひらがな・カタカナ・漢字を抽出
-        words = re.findall(r'[a-zA-Z0-9]+|[\u3040-\u309F]+|[\u30A0-\u30FF]+|[\u4E00-\u9FFF]+', text.lower())
+    # 正規化: ローマ字に統一して比較
+    def normalize_to_words(text: str) -> set:
+        # まずローマ字に変換
+        romaji_text = normalize_to_romaji(text)
+        # 英数字のみ抽出（ローマ字変換後なので日本語は全て英字になっている）
+        words = re.findall(r'[a-z0-9]+', romaji_text)
         # 2文字以上の単語のみ
         return set(w for w in words if len(w) >= 2)
 
-    ebay_words = normalize(ebay_title)
-    source_words = normalize(source_title)
+    def normalize_to_string(text: str) -> str:
+        # ローマ字に変換し、英数字のみ残す（スペースなし）
+        romaji_text = normalize_to_romaji(text)
+        return re.sub(r'[^a-z0-9]', '', romaji_text)
+
+    ebay_words = normalize_to_words(ebay_title)
+    source_words = normalize_to_words(source_title)
 
     if not ebay_words or not source_words:
         return model_bonus  # 型番ボーナスのみ
 
-    # 共通キーワード数
+    # 直接の単語一致
     common = ebay_words & source_words
 
-    # 基本類似度 = 共通キーワード数 / min(両方のキーワード数)
-    base_similarity = len(common) / min(len(ebay_words), len(source_words))
+    # 部分文字列マッチング（日本語は単語区切りがないため）
+    # 短い単語が長い文字列に含まれているかチェック
+    ebay_string = normalize_to_string(ebay_title)
+    source_string = normalize_to_string(source_title)
+
+    substring_matches = 0
+    for word in ebay_words:
+        if len(word) >= 3 and word in source_string and word not in common:
+            substring_matches += 1
+    for word in source_words:
+        if len(word) >= 3 and word in ebay_string and word not in common:
+            substring_matches += 1
+
+    # 直接一致 + 部分文字列一致（重み0.7）
+    total_matches = len(common) + substring_matches * 0.7
+
+    # 基本類似度 = マッチ数 / min(両方のキーワード数)
+    base_similarity = total_matches / min(len(ebay_words), len(source_words))
 
     # 型番ボーナスを加算
     total_similarity = base_similarity + model_bonus
 
-    return total_similarity
+    return min(total_similarity, 1.5)  # 上限1.5
 
 
 # 許可する日本国内ECサイト（ホワイトリスト方式）

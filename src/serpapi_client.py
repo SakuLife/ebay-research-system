@@ -158,12 +158,24 @@ class SerpApiClient:
         elif not self.api_key:
             print("  [WARN] SERP_API_KEY not set. SerpApi disabled.")
 
+    # eBay Item Location codes
+    EBAY_LOCATION_CODES = {
+        "japan": "104",
+        "us": "1",
+        "uk": "3",
+        "germany": "77",
+        "china": "45",
+        "worldwide": None,  # フィルタなし
+    }
+
     def search_sold_items(
         self,
         keyword: str,
         market: str = "UK",
         min_price: float = 0,
-        max_results: int = 20
+        max_results: int = 20,
+        item_location: str = "japan",
+        condition: str = "any"
     ) -> List[SoldItem]:
         """
         eBayで売れた商品（完了したリスティング）を検索する.
@@ -173,6 +185,9 @@ class SerpApiClient:
             market: マーケット (UK, US, EU)
             min_price: 最低価格（現地通貨）
             max_results: 最大取得件数
+            item_location: 商品所在地フィルタ ("japan", "us", "uk", "worldwide")
+                           デフォルトは"japan"（日本から出品された商品のみ）
+            condition: 商品状態 ("new", "used", "any")
 
         Returns:
             SoldItemのリスト
@@ -202,6 +217,18 @@ class SerpApiClient:
         # Add price filter if specified
         if min_price > 0:
             params["_udlo"] = str(int(min_price))  # Minimum price
+
+        # Add item location filter (日本から出品された商品に限定)
+        location_code = self.EBAY_LOCATION_CODES.get(item_location.lower())
+        if location_code:
+            params["_salic"] = location_code
+            print(f"  [SerpApi] Filtering by location: {item_location} (code={location_code})")
+
+        # Add condition filter
+        if condition.lower() == "new":
+            params["LH_ItemCondition"] = "3"  # 3=New
+        elif condition.lower() == "used":
+            params["LH_ItemCondition"] = "4"  # 4=Used
 
         try:
             print(f"  [SerpApi] Searching sold items: '{keyword}' on {ebay_domain}")

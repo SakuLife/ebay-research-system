@@ -447,13 +447,26 @@ def main():
         local_rate = currency_rates.get(market, 0.79)
         min_price_local = min_price_usd * local_rate
 
+        # Item location filter: "japan" by default (only items shipped from Japan)
+        # This dramatically improves matching rate with domestic sources
+        item_location = settings.get("item_location", "japan")
+
         # Try SerpApi first (sold items - past completed listings)
         serpapi_client = SerpApiClient()
         sold_items = []
 
         if serpapi_client.is_enabled:
+            # Map condition to eBay condition filter
+            ebay_condition = "new" if condition == "New" else "any"
+            print(f"  [eBay] Location filter: {item_location}, Condition: {ebay_condition}")
+
             serpapi_results = serpapi_client.search_sold_items(
-                keyword, market=market, min_price=min_price_local, max_results=items_per_keyword * 2
+                keyword,
+                market=market,
+                min_price=min_price_local,
+                max_results=items_per_keyword * 2,
+                item_location=item_location,
+                condition=ebay_condition
             )
 
             # Convert SerpApi results to ListingCandidate format

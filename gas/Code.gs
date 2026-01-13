@@ -55,6 +55,7 @@ function runAutoResearch() {
   const minProfit = settingsSheet.getRange('B7').getValue() || 'フィルターなし';
   const itemsPerKeyword = settingsSheet.getRange('B8').getValue() || '5';
   const minSold = settingsSheet.getRange('B9').getValue() || '0';
+  const condition = settingsSheet.getRange('B10').getValue() || 'New';
 
   // === キーワードと修飾語を読み取り ===
   const keywordData = settingsSheet.getRange('E4:F100').getValues();
@@ -90,6 +91,7 @@ function runAutoResearch() {
   let confirmMessage = '';
   confirmMessage += '【検索設定】\n';
   confirmMessage += `  マーケット: ${market}\n`;
+  confirmMessage += `  商品状態: ${condition}\n`;
   confirmMessage += `  最低価格: $${minPrice}\n`;
   confirmMessage += `  最低利益: ${minProfit}\n`;
   confirmMessage += `  最小販売数: ${minSold}\n`;

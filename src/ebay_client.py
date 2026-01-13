@@ -280,15 +280,15 @@ class EbayClient:
 
         # Search for active listings
         # Filters: Fixed Price only, New condition, optional min price
-        # Sort: Price ascending (lowest first)
-        # Note: Browse API doesn't have "price + shipping" sort option
+        # Sort: Best Match (default, most relevant first)
         filter_parts = ["buyingOptions:{FIXED_PRICE}", "conditionIds:{1000}"]
 
         # Currency conversion rates (approximate USD to local currency)
+        # Using conservative rates to ensure we don't miss items at the boundary
         currency_info = {
-            "UK": {"rate": 0.79, "currency": "GBP"},  # USD to GBP
+            "UK": {"rate": 0.78, "currency": "GBP"},  # USD to GBP (conservative)
             "US": {"rate": 1.0, "currency": "USD"},   # USD to USD
-            "EU": {"rate": 0.92, "currency": "EUR"},  # USD to EUR
+            "EU": {"rate": 0.90, "currency": "EUR"},  # USD to EUR (conservative)
         }
 
         # Add minimum price filter if specified (convert to local currency)
@@ -298,11 +298,11 @@ class EbayClient:
             # IMPORTANT: priceCurrency is required for price filter to work correctly
             filter_parts.append(f"priceCurrency:{info['currency']}")
             filter_parts.append(f"price:[{local_price}..]")
-            print(f"  [INFO] Price filter: ${min_price_usd}+ ({info['currency']} {local_price}+)")
+            print(f"  [INFO] Price filter: ${min_price_usd}+ = {info['currency']} {local_price}+")
 
         params = {
             "q": keyword,
-            "sort": "price",  # Sort by price ascending (lowest first)
+            # No "sort" param = Best Match (relevance, default)
             "limit": 50,
             "filter": ",".join(filter_parts)
         }

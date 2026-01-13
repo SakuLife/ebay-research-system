@@ -1,6 +1,7 @@
 """SerpApi client for eBay sold items search and Amazon.co.jp search."""
 
 import os
+import re
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -9,6 +10,78 @@ try:
     SERPAPI_AVAILABLE = True
 except ImportError:
     SERPAPI_AVAILABLE = False
+
+
+def clean_query_for_shopping(query: str, max_length: int = 100) -> str:
+    """
+    eBayタイトルをGoogle Shopping検索用に整形する.
+
+    - 販売者情報・配送情報など関係ない言葉を削除
+    - Bundle/Lot/Collection系を削除
+    - PSA 10等のグレーディングは残す（重要な識別子）
+    - 文字数制限
+
+    Args:
+        query: 元のクエリ（eBayタイトル）
+        max_length: 最大文字数
+
+    Returns:
+        整形後のクエリ
+    """
+    if not query:
+        return ""
+
+    # 販売者・配送関連を削除（商品と無関係）
+    noise_patterns = [
+        r'\bFREE\s*SHIPPING\b',
+        r'\bFAST\s*SHIPPING\b',
+        r'\bUS\s*SELLER\b',
+        r'\bUK\s*SELLER\b',
+        r'\bJAPAN\s*IMPORT\b',
+        r'\bJAPANESE\s*VERSION\b',
+        r'\bFROM\s*JAPAN\b',
+        r'\bSHIPS?\s*FROM\b',
+        r'\bWORLDWIDE\b',
+        # バンドル・まとめ売り系
+        r'\b\d+\s*CARDS?\s*LOT\b',      # "180 Cards Lot"
+        r'\bLOT\s*OF\s*\d+\b',           # "Lot of 50"
+        r'\bBUNDLE\b',
+        r'\bCOLLECTION\b',
+        r'\bBULK\b',
+        r'\bSET\s*OF\s*\d+\b',           # "Set of 10"
+        # 宣伝文句
+        r'\bMUST\s*SEE\b',
+        r'\bLOOK\b',
+        r'\bWOW\b',
+        r'\bHOT\b',
+        r'\bL@@K\b',
+        r'\bNR\b',                        # No Reserve
+        r'\bNO\s*RESERVE\b',
+    ]
+    for pattern in noise_patterns:
+        query = re.sub(pattern, '', query, flags=re.IGNORECASE)
+
+    # 余計な記号を削除（括弧内の短い記号表記など）
+    query = re.sub(r'\([^)]{1,3}\)', '', query)   # (NM) (JP) など短いもの
+    query = re.sub(r'\[[^\]]{1,3}\]', '', query)  # [NM] など短いもの
+
+    # 複数のスペースを1つに
+    query = re.sub(r'\s+', ' ', query).strip()
+
+    # 文字数制限（単語単位で切る）
+    if len(query) > max_length:
+        words = query.split()
+        result = []
+        current_len = 0
+        for word in words:
+            if current_len + len(word) + 1 <= max_length:
+                result.append(word)
+                current_len += len(word) + 1
+            else:
+                break
+        query = ' '.join(result)
+
+    return query.strip()
 
 
 @dataclass
@@ -48,6 +121,27 @@ class ShoppingItem:
 
 class SerpApiClient:
     """SerpApiを使ってeBayの売れた商品を検索するクライアント."""
+
+    # 新品サイト（New時のみ対象）
+    NEW_DOMAINS = [
+        "rakuten.co.jp",
+        "amazon.co.jp",
+        "yodobashi.com",
+        "biccamera.com",
+        "joshin.co.jp",
+    ]
+
+    # 中古サイト（Used時に追加で対象）
+    USED_DOMAINS = [
+        "mercari.com",
+        "yahoo.co.jp",      # ヤフオク
+        "magi.camp",
+        "snkrdunk.com",
+        "suruga-ya.jp",
+        "trader.co.jp",
+        "fril.jp",          # ラクマ
+        "2ndstreet.jp",
+    ]
 
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -473,4 +567,133 @@ class SerpApiClient:
 
         except Exception as e:
             print(f"  [ERROR] SerpApi Google Lens request failed: {e}")
+            return []
+
+    def search_google_web_jp(
+        self,
+        keyword: str,
+        condition: str = "any",
+        max_results: int = 10
+    ) -> List[ShoppingItem]:
+        """
+        Google Web検索（日本）で商品を検索する.
+        Shopping検索で結果がない場合のフォールバック用.
+        日本のECサイト（メルカリ、ヤフオク、楽天、Amazon等）のみ抽出.
+
+        Args:
+            keyword: 検索キーワード
+            condition: 商品状態 "new", "used", "any"
+            max_results: 最大取得件数
+
+        Returns:
+            ShoppingItemのリスト
+        """
+        if not self.is_enabled:
+            print("  [WARN] SerpApi is not available")
+            return []
+
+        # conditionに基づいて対象ドメインを決定
+        if condition == "new":
+            target_domains = self.NEW_DOMAINS
+        elif condition == "used":
+            target_domains = self.NEW_DOMAINS + self.USED_DOMAINS
+        else:
+            target_domains = self.NEW_DOMAINS + self.USED_DOMAINS
+
+        params = {
+            "engine": "google",
+            "q": keyword,
+            "location": "Japan",
+            "hl": "ja",
+            "gl": "jp",
+            "num": 50,  # 多めに取得してフィルタ
+            "api_key": self.api_key
+        }
+
+        try:
+            print(f"  [SerpApi] Google Web search: '{keyword[:50]}...'")
+            search = GoogleSearch(params)
+            results = search.get_dict()
+
+            if "error" in results:
+                print(f"  [ERROR] SerpApi Google Web error: {results['error']}")
+                return []
+
+            organic_results = results.get("organic_results", [])
+            print(f"  [SerpApi] Found {len(organic_results)} web results")
+
+            items = []
+            for item in organic_results:
+                try:
+                    link = item.get("link", "")
+
+                    # 日本のECサイトのみフィルタ
+                    if not any(domain in link for domain in target_domains):
+                        continue
+
+                    title = item.get("title", "")
+                    snippet = item.get("snippet", "")
+
+                    # ソース名を判定
+                    source = ""
+                    if "mercari.com" in link:
+                        source = "メルカリ"
+                    elif "yahoo.co.jp" in link:
+                        source = "ヤフオク"
+                    elif "rakuten.co.jp" in link:
+                        source = "楽天"
+                    elif "amazon.co.jp" in link:
+                        source = "Amazon"
+                    elif "suruga-ya.jp" in link:
+                        source = "駿河屋"
+                    elif "yodobashi.com" in link:
+                        source = "ヨドバシ"
+                    elif "biccamera.com" in link:
+                        source = "ビックカメラ"
+                    elif "magi.camp" in link:
+                        source = "magi"
+                    elif "snkrdunk.com" in link:
+                        source = "スニダン"
+                    elif "fril.jp" in link:
+                        source = "ラクマ"
+                    elif "2ndstreet.jp" in link:
+                        source = "セカスト"
+                    else:
+                        source = "その他"
+
+                    # 価格を抽出（snippet内の円表記から）
+                    price = 0.0
+                    # "1,234円" or "¥1,234" パターン
+                    price_match = re.search(r'[¥￥]?\s*([\d,]+)\s*円', snippet)
+                    if price_match:
+                        price = float(price_match.group(1).replace(',', ''))
+                    else:
+                        # "¥1,234" パターン（円なし）
+                        price_match = re.search(r'[¥￥]\s*([\d,]+)', snippet)
+                        if price_match:
+                            price = float(price_match.group(1).replace(',', ''))
+
+                    thumbnail = item.get("thumbnail", "")
+
+                    items.append(ShoppingItem(
+                        title=title,
+                        price=price,
+                        currency="JPY",
+                        link=link,
+                        source=source,
+                        thumbnail=thumbnail,
+                    ))
+
+                    if len(items) >= max_results:
+                        break
+
+                except Exception as e:
+                    print(f"  [WARN] Failed to parse web result: {e}")
+                    continue
+
+            print(f"  [SerpApi] Found {len(items)} Japanese EC matches")
+            return items
+
+        except Exception as e:
+            print(f"  [ERROR] SerpApi Google Web request failed: {e}")
             return []

@@ -19,7 +19,7 @@ from .search_base_client import SearchBaseClient
 from .config_loader import load_all_configs
 from .weight_estimator import estimate_weight_from_price
 from .models import SourceOffer, ListingCandidate
-from .serpapi_client import SerpApiClient, ShoppingItem
+from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shopping
 from .gemini_client import GeminiClient
 
 
@@ -398,8 +398,11 @@ def main():
 
             # === 2. 英語のままでGoogle Shopping検索 ===
             if not best_source and serpapi_client.is_enabled and ebay_title:
-                print(f"  [Step 2] Google Shopping (English): {ebay_title[:40]}...")
-                shopping_results = serpapi_client.search_google_shopping_jp(ebay_title, max_results=10)
+                # クエリを整形（PSA番号、状態表記、ノイズワード除去）
+                cleaned_query = clean_query_for_shopping(ebay_title)
+                print(f"  [Step 2] Google Shopping (English): {cleaned_query[:50]}...")
+
+                shopping_results = serpapi_client.search_google_shopping_jp(cleaned_query, max_results=10)
 
                 all_sources = []
                 for shop_item in shopping_results:
@@ -419,6 +422,24 @@ def main():
 
                 print(f"  [Step 2] Found {len(all_sources)} items")
 
+                # Shoppingが0件の場合、Web検索へフォールバック
+                if not all_sources:
+                    print(f"  [Step 2b] Shopping 0 results, trying Web search...")
+                    web_results = serpapi_client.search_google_web_jp(cleaned_query, max_results=10)
+
+                    for shop_item in web_results:
+                        # Web検索は価格が取れないことが多いので、URLのみ記録
+                        all_sources.append(SourceOffer(
+                            source_site=shop_item.source,
+                            source_url=shop_item.link,
+                            source_price_jpy=shop_item.price if shop_item.price > 0 else 0,
+                            source_shipping_jpy=0,
+                            stock_hint="Web検索",
+                            title=shop_item.title,
+                        ))
+
+                    print(f"  [Step 2b] Found {len(all_sources)} items via Web search")
+
                 if all_sources:
                     best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
                     if best_source:
@@ -428,11 +449,14 @@ def main():
             if not best_source and serpapi_client.is_enabled:
                 print(f"  [Step 3] Trying Japanese search...")
 
+                # まずタイトルを整形してからGeminiで翻訳（ノイズを減らす）
+                cleaned_title = clean_query_for_shopping(ebay_title) if ebay_title else ""
+
                 # Geminiで翻訳
                 gemini_client = GeminiClient()
                 japanese_query = None
-                if gemini_client.is_enabled and ebay_title:
-                    japanese_query = gemini_client.translate_product_name(ebay_title)
+                if gemini_client.is_enabled and cleaned_title:
+                    japanese_query = gemini_client.translate_product_name(cleaned_title)
                     if japanese_query:
                         print(f"  [Gemini] Translated: {japanese_query}")
 
@@ -462,6 +486,23 @@ def main():
                         ))
 
                 print(f"  [Step 3] Found {len(all_sources)} items")
+
+                # Shoppingが0件の場合、Web検索へフォールバック
+                if not all_sources:
+                    print(f"  [Step 3b] Shopping 0 results, trying Web search...")
+                    web_results = serpapi_client.search_google_web_jp(japanese_query, max_results=10)
+
+                    for shop_item in web_results:
+                        all_sources.append(SourceOffer(
+                            source_site=shop_item.source,
+                            source_url=shop_item.link,
+                            source_price_jpy=shop_item.price if shop_item.price > 0 else 0,
+                            source_shipping_jpy=0,
+                            stock_hint="Web検索",
+                            title=shop_item.title,
+                        ))
+
+                    print(f"  [Step 3b] Found {len(all_sources)} items via Web search")
 
                 if all_sources:
                     best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)

@@ -6,6 +6,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ from .weight_estimator import estimate_weight_from_title, detect_product_type
 from .models import SourceOffer, ListingCandidate
 from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shopping
 from .gemini_client import GeminiClient
+from .price_scraper import scrape_price_for_url
 
 
 def encode_url_with_japanese(url: str) -> str:
@@ -565,15 +567,26 @@ def calculate_source_priority(source_site: str) -> float:
     return 0.7  # 不明なサイトは中間
 
 
-def find_best_matching_source(
+@dataclass
+class RankedSource:
+    """スコア付き仕入先."""
+    source: SourceOffer
+    score: float
+    similarity: float
+    condition_score: float
+    priority: float
+
+
+def find_top_matching_sources(
     ebay_title: str,
     sources: List[SourceOffer],
     min_similarity: float = 0.2,
     prefer_sourcing: bool = True,
-    require_price: bool = True
-) -> Optional[SourceOffer]:
+    require_price: bool = True,
+    top_n: int = 3
+) -> List[RankedSource]:
     """
-    eBayタイトルに最もマッチする仕入先を見つける.
+    eBayタイトルにマッチする仕入先をスコア順に最大N件返す.
     類似度 × conditionスコア × 仕入れ優先度 で総合評価.
 
     Args:
@@ -582,16 +595,17 @@ def find_best_matching_source(
         min_similarity: 最低類似度
         prefer_sourcing: 仕入れ可能サイトを優先するか
         require_price: 価格が必須かどうか（Trueなら価格0円は除外）
+        top_n: 返す件数（デフォルト3）
 
     Returns:
-        最適な仕入先、見つからない場合はNone
+        RankedSourceのリスト（スコア降順）
     """
     if not sources:
-        return None
+        return []
 
-    best_source = None
-    best_score = 0.0
+    ranked_sources: List[RankedSource] = []
     excluded_urls = 0
+    seen_urls = set()  # 重複URL除外用
 
     MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
 
@@ -600,6 +614,11 @@ def find_best_matching_source(
         if not is_allowed_source_url(source.source_url):
             excluded_urls += 1
             continue
+
+        # 重複URL除外（同じ商品が複数回出てくることがある）
+        if source.source_url in seen_urls:
+            continue
+        seen_urls.add(source.source_url)
 
         # 価格0円の処理
         # 大手ECサイトは価格0でも候補に含める（後で手動確認）
@@ -621,25 +640,50 @@ def find_best_matching_source(
         # 総合スコア = 類似度 × conditionスコア × 優先度
         total_score = similarity * condition_score * priority
 
-        if total_score > best_score:
-            best_score = total_score
-            best_source = source
+        ranked_sources.append(RankedSource(
+            source=source,
+            score=total_score,
+            similarity=similarity,
+            condition_score=condition_score,
+            priority=priority
+        ))
 
     if excluded_urls > 0:
         print(f"    (海外/PDF除外: {excluded_urls}件)")
 
-    return best_source
+    # スコア降順でソートして上位N件を返す
+    ranked_sources.sort(key=lambda x: x.score, reverse=True)
+    return ranked_sources[:top_n]
+
+
+def find_best_matching_source(
+    ebay_title: str,
+    sources: List[SourceOffer],
+    min_similarity: float = 0.2,
+    prefer_sourcing: bool = True,
+    require_price: bool = True
+) -> Optional[SourceOffer]:
+    """
+    eBayタイトルに最もマッチする仕入先を見つける（後方互換用）.
+
+    Returns:
+        最適な仕入先、見つからない場合はNone
+    """
+    top_sources = find_top_matching_sources(
+        ebay_title, sources, min_similarity, prefer_sourcing, require_price, top_n=1
+    )
+    return top_sources[0].source if top_sources else None
 
 
 def get_processed_ebay_ids(sheet_client) -> set:
     """
     スプレッドシートから処理済みeBay商品IDを取得する.
-    eBayリンク列（K列）からitem IDを抽出.
+    eBayリンク列（N列）からitem IDを抽出.
     """
     try:
         worksheet = sheet_client.spreadsheet.worksheet("入力シート")
-        # K列（eBayリンク）を取得
-        ebay_urls = worksheet.col_values(11)  # K列 = 11番目
+        # N列（eBayリンク）を取得
+        ebay_urls = worksheet.col_values(14)  # N列 = 14番目
 
         processed_ids = set()
         for url in ebay_urls[1:]:  # ヘッダーをスキップ
@@ -679,35 +723,37 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data[2] = data.get("category_name", "")  # カテゴリ
     row_data[3] = data.get("category_id", "")  # カテゴリ番号
 
-    # ソーシング結果（国内最安①②③）
+    # ソーシング結果（国内最安①②③）- 商品名、リンク、価格
     sourcing_results = data.get("sourcing_results", [])
     for idx, result in enumerate(sourcing_results[:3]):
-        url_col = 4 + (idx * 2)  # 4, 6, 8
-        price_col = 5 + (idx * 2)  # 5, 7, 9
+        title_col = 4 + (idx * 3)  # 4, 7, 10 (商品名)
+        url_col = 5 + (idx * 3)    # 5, 8, 11 (リンク)
+        price_col = 6 + (idx * 3)  # 6, 9, 12 (価格)
+        row_data[title_col] = result.get("title", "")
         row_data[url_col] = result.get("url", "")
-        row_data[price_col] = str(result.get("price", ""))
+        row_data[price_col] = str(result.get("price", "")) if result.get("price", 0) > 0 else ""
 
     # eBay情報
-    row_data[10] = data.get("ebay_url", "")  # eBayリンク
-    row_data[11] = str(data.get("ebay_price", ""))  # 販売価格（米ドル）
-    row_data[12] = str(data.get("ebay_shipping", ""))  # 販売送料（米ドル）
+    row_data[13] = data.get("ebay_url", "")  # eBayリンク (N列)
+    row_data[14] = str(data.get("ebay_price", ""))  # 販売価格（米ドル）(O列)
+    row_data[15] = str(data.get("ebay_shipping", ""))  # 販売送料（米ドル）(P列)
 
     # 利益計算結果
-    row_data[13] = str(data.get("profit_no_rebate", ""))  # 還付抜き利益額（円）
-    row_data[14] = str(data.get("profit_margin_no_rebate", ""))  # 利益率%（還付抜き）
-    row_data[15] = str(data.get("profit_with_rebate", ""))  # 還付あり利益額（円）
-    row_data[16] = str(data.get("profit_margin_with_rebate", ""))  # 利益率%（還付あり）
+    row_data[16] = str(data.get("profit_no_rebate", ""))  # 還付抜き利益額（円）(Q列)
+    row_data[17] = str(data.get("profit_margin_no_rebate", ""))  # 利益率%（還付抜き）(R列)
+    row_data[18] = str(data.get("profit_with_rebate", ""))  # 還付あり利益額（円）(S列)
+    row_data[19] = str(data.get("profit_margin_with_rebate", ""))  # 利益率%（還付あり）(T列)
 
     # ステータスとメモ
     if data.get("error"):
-        row_data[17] = "エラー"  # ステータス
-        row_data[18] = f"ERROR: {data.get('error')}"  # メモ
+        row_data[20] = "エラー"  # ステータス (U列)
+        row_data[21] = f"ERROR: {data.get('error')}"  # メモ (V列)
     else:
-        row_data[17] = "要確認"  # ステータス
-        row_data[18] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # メモ
+        row_data[20] = "要確認"  # ステータス (U列)
+        row_data[21] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # メモ (V列)
 
-    # Write to specific row (A〜S列：19列)
-    cell_range = f"A{row_number}:S{row_number}"
+    # Write to specific row (A〜V列：22列)
+    cell_range = f"A{row_number}:V{row_number}"
     worksheet.update(range_name=cell_range, values=[row_data])
 
     print(f"  [WRITE] Written to row {row_number}")
@@ -963,6 +1009,7 @@ def main():
 
             all_sources = []
             best_source = None
+            top_sources: List[RankedSource] = []  # トップ3の仕入先
             search_method = ""
 
             # === 1. Google Lens画像検索 ===
@@ -1040,11 +1087,18 @@ def main():
                     valid_sources = [(src, sim, total) for src, sim, _, _, total in scored_sources if sim >= MIN_IMAGE_SIMILARITY]
 
                     if valid_sources:
-                        # スコア最高のものを選択
-                        best_item = max(valid_sources, key=lambda x: x[2])
-                        best_source = best_item[0]
-                        best_sim = best_item[1]
-                        print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{best_sim:.0%})")
+                        # スコア順にソートして上位3件を取得
+                        valid_sources.sort(key=lambda x: x[2], reverse=True)
+                        for src, sim, total in valid_sources[:3]:
+                            cond_score = calculate_condition_score(src.title, src.source_site)
+                            prio = calculate_source_priority(src.source_site)
+                            top_sources.append(RankedSource(
+                                source=src, score=total, similarity=sim,
+                                condition_score=cond_score, priority=prio
+                            ))
+                        best_source = top_sources[0].source
+                        best_sim = top_sources[0].similarity
+                        print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{best_sim:.0%}, 計{len(top_sources)}件)")
                         search_method = "画像検索"
                     else:
                         print(f"    → 類似度閾値({MIN_IMAGE_SIMILARITY:.0%})未満のため選択なし、次のステップへ")
@@ -1052,7 +1106,7 @@ def main():
                     print(f"    → 有効な仕入先なし、次のステップへ")
 
             # === 2. 英語のままでGoogle Shopping検索（日本向け）===
-            if not best_source and serpapi_client.is_enabled and ebay_title:
+            if not top_sources and serpapi_client.is_enabled and ebay_title:
                 # クエリを整形（PSA番号、状態表記、ノイズワード除去）
                 cleaned_query = clean_query_for_shopping(ebay_title)
                 print(f"  [Step 2] Google Shopping検索 (英語/日本向け)")
@@ -1154,15 +1208,16 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
-                    if best_source:
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3)
+                    if top_sources:
+                        best_source = top_sources[0].source
                         search_method = "英語検索"
-                        print(f"    → 選択: [{best_source.source_site}]")
+                        print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
                     else:
                         print(f"    → 類似度閾値(20%)未満のため選択なし")
 
             # === 3. 日本語に翻訳してGoogle Shopping検索 ===
-            if not best_source and serpapi_client.is_enabled:
+            if not top_sources and serpapi_client.is_enabled:
                 print(f"  [Step 3] Google Shopping検索 (日本語翻訳)")
 
                 # まずタイトルを整形してからGeminiで翻訳（ノイズを減らす）
@@ -1281,17 +1336,18 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    best_source = find_best_matching_source(ebay_title, all_sources, min_similarity=0.2)
-                    if best_source:
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3)
+                    if top_sources:
+                        best_source = top_sources[0].source
                         search_method = "日本語検索"
-                        print(f"    → 選択: [{best_source.source_site}]")
+                        print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
                     else:
                         print(f"    → 類似度閾値(20%)未満のため選択なし")
 
             # 結果判定
             error_reason = None
 
-            if not best_source:
+            if not top_sources:
                 if not all_sources:
                     print(f"  [WARN] No domestic sources found")
                     error_reason = "国内仕入先なし"
@@ -1301,20 +1357,42 @@ def main():
                     print(f"         Best candidate: {all_sources[0].title[:50]}...")
                     error_reason = "類似商品なし"
 
-            # 仕入先が見つかった場合の処理
+            # トップ3の仕入先を処理（価格スクレイピング含む）
             total_source_price = 0
             similarity = 0.0
             needs_price_check = False  # 大手ECで価格なしの場合
-            if best_source:
-                total_source_price = best_source.source_price_jpy + best_source.source_shipping_jpy
-                similarity = calculate_title_similarity(ebay_title, best_source.title)
 
-                # 大手ECで価格がない場合は「要価格確認」
+            # 全ての候補に対してスクレイピングを試みる
+            if top_sources:
+                print(f"\n  [INFO] Processing top {len(top_sources)} sources...")
+                for rank, ranked_src in enumerate(top_sources, 1):
+                    src = ranked_src.source
+                    src_price = src.source_price_jpy + src.source_shipping_jpy
+
+                    # 価格0の場合はスクレイピング
+                    if src_price <= 0:
+                        print(f"    [{rank}位] {src.source_site} - 価格0円、スクレイピング中...")
+                        scraped = scrape_price_for_url(src.source_url)
+                        if scraped.success and scraped.price > 0:
+                            src.source_price_jpy = scraped.price
+                            print(f"         → JPY {scraped.price:,.0f} (scraped)")
+                        else:
+                            print(f"         → 取得失敗: {scraped.error_message}")
+                    else:
+                        print(f"    [{rank}位] {src.source_site} - JPY {src_price:,.0f}")
+
+                # 1位の情報を取得（利益計算用）
+                best_source = top_sources[0].source
+                total_source_price = best_source.source_price_jpy + best_source.source_shipping_jpy
+                similarity = top_sources[0].similarity
+
+                # 1位の価格がまだ0なら「要価格確認」
                 if total_source_price <= 0:
                     needs_price_check = True
                     print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
                 else:
                     print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+
                 print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
                 if search_method != "画像検索":
                     print(f"  [INFO] Title similarity: {similarity:.0%}")
@@ -1398,11 +1476,15 @@ def main():
                 print(f"\n[5/5] Skipping profit calculation (no source found)")
 
             # Write to spreadsheet（利益がOKまたはエラー理由ありの場合のみ）
+            # トップ3の仕入先を全てsourcing_resultsに追加（商品名含む）
             sourcing_results = []
-            if best_source:
+            for ranked_src in top_sources:
+                src = ranked_src.source
+                src_price = src.source_price_jpy + src.source_shipping_jpy
                 sourcing_results.append({
-                    "url": best_source.source_url,
-                    "price": total_source_price
+                    "title": src.title,  # 商品名
+                    "url": src.source_url,
+                    "price": src_price
                 })
 
             result_data = {

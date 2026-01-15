@@ -475,6 +475,22 @@ CHARACTER_NAME_MAPPINGS = {
     'studio ghibli': ['スタジオジブリ', 'ジブリ', 'sutajio jiburi', 'jiburi'],
     'totoro': ['トトロ', 'totoro'],
     'spirited away': ['千と千尋の神隠し', 'sen to chihiro'],
+    # Horror Bishoujo / Horror figures
+    'tiffany': ['ティファニー', 'tifanii'],
+    'chucky': ['チャッキー', 'chakkii'],
+    'freddy krueger': ['フレディ', 'freddy', 'furedi'],
+    'jason voorhees': ['ジェイソン', 'jason', 'jeison'],
+    'michael myers': ['マイケル・マイヤーズ', 'マイケルマイヤーズ', 'maikeru maiyaazu'],
+    'pennywise': ['ペニーワイズ', 'peniwaizu'],
+    'annabelle': ['アナベル', 'anaberu'],
+    'sadako': ['貞子', 'sadako'],
+    'kayako': ['伽椰子', 'kayako'],
+    'leatherface': ['レザーフェイス', 'rezaafeisu'],
+    'ghostface': ['ゴーストフェイス', 'goosutofeisu'],
+    'pinhead': ['ピンヘッド', 'pinheddo'],
+    'beetlejuice': ['ビートルジュース', 'biitorujuusu'],
+    'edward scissorhands': ['エドワード・シザーハンズ', 'シザーハンズ', 'shizaahanzu'],
+    'bride of chucky': ['チャイルドプレイ', 'チャッキーの花嫁', 'chairudopurei'],
     # Plush / Toy terms
     'plush': ['ぬいぐるみ', 'nuigurumi'],
     'plushie': ['ぬいぐるみ', 'nuigurumi'],
@@ -493,6 +509,95 @@ CATEGORY_EXCLUSION_KEYWORDS = {
     # カードカテゴリ
     'card': ['スリーブ', 'sleeve', 'デッキケース', 'deck box', 'バインダー', 'binder'],
 }
+
+
+def extract_key_identifiers(title: str) -> List[tuple]:
+    """
+    タイトルからキーとなる固有名詞（キャラクター名等）を抽出する.
+
+    CHARACTER_NAME_MAPPINGS に登録されている名前を検出し、
+    (英語キー, 日本語バリエーションリスト) のタプルを返す.
+
+    例:
+    - "HORROR Bishoujo Tiffany Figure" → [('tiffany', ['ティファニー', 'tifanii'])]
+    - "Pokemon Pikachu Plush" → [('pokemon', [...]), ('pikachu', [...])]
+
+    Args:
+        title: 商品タイトル
+
+    Returns:
+        抽出されたキー識別子のリスト [(eng_key, jp_variants), ...]
+    """
+    if not title:
+        return []
+
+    title_lower = title.lower()
+    found_identifiers = []
+
+    # CHARACTER_NAME_MAPPINGS から検索
+    for eng_name, jp_variants in CHARACTER_NAME_MAPPINGS.items():
+        # 英語名がタイトルに含まれているか
+        if eng_name in title_lower:
+            found_identifiers.append((eng_name, jp_variants))
+            continue
+
+        # 日本語バリエーションがタイトルに含まれているか
+        for variant in jp_variants:
+            if variant in title or variant.lower() in title_lower:
+                found_identifiers.append((eng_name, jp_variants))
+                break
+
+    return found_identifiers
+
+
+def check_key_identifier_match(ebay_title: str, source_title: str) -> tuple:
+    """
+    eBayタイトルのキー識別子が仕入先タイトルに含まれているかチェック.
+
+    例:
+    - eBay: "HORROR Bishoujo Tiffany" → キー: "tiffany"
+    - Source: "HORROR美少女 チャッキー" → "ティファニー"なし → ❌
+    - Source: "HORROR美少女 ティファニー" → "ティファニー"あり → ✓
+
+    Args:
+        ebay_title: eBayタイトル
+        source_title: 仕入先タイトル
+
+    Returns:
+        (match_ratio, missing_keys):
+        - match_ratio: 一致率（0.0〜1.0）
+        - missing_keys: 見つからなかったキーのリスト
+    """
+    ebay_identifiers = extract_key_identifiers(ebay_title)
+
+    if not ebay_identifiers:
+        # キー識別子がない場合は問題なし
+        return (1.0, [])
+
+    source_lower = source_title.lower()
+    matched = 0
+    missing_keys = []
+
+    for eng_key, jp_variants in ebay_identifiers:
+        found = False
+
+        # 英語名がソースに含まれているか
+        if eng_key in source_lower:
+            found = True
+        else:
+            # 日本語バリエーションがソースに含まれているか
+            for variant in jp_variants:
+                if variant in source_title or variant.lower() in source_lower:
+                    found = True
+                    break
+
+        if found:
+            matched += 1
+        else:
+            missing_keys.append(eng_key)
+
+    match_ratio = matched / len(ebay_identifiers) if ebay_identifiers else 1.0
+    return (match_ratio, missing_keys)
 
 
 def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
@@ -987,8 +1092,18 @@ def find_top_matching_sources(
         # 価格あり: 1.5倍、価格なし: 0.3倍（大幅にペナルティ）
         price_bonus = 1.5 if has_price else 0.3
 
-        # 総合スコア = 類似度 × conditionスコア × 優先度 × 価格ボーナス
-        total_score = similarity * condition_score * priority * price_bonus
+        # キー識別子（キャラクター名等）マッチチェック
+        # eBayタイトルにあるキャラ名が仕入先にない場合はペナルティ
+        key_match_ratio, missing_keys = check_key_identifier_match(ebay_title, source.title)
+        key_match_bonus = 1.0
+        if missing_keys:
+            # 重要なキーワードが欠けている場合は大幅ペナルティ
+            # 例: "Tiffany"が欲しいのに"チャッキー"が出てきた場合
+            key_match_bonus = 0.1  # 90%減点
+            print(f"    [WARN] キー不一致: {', '.join(missing_keys)} が見つからない → {source.title[:40]}...")
+
+        # 総合スコア = 類似度 × conditionスコア × 優先度 × 価格ボーナス × キー一致ボーナス
+        total_score = similarity * condition_score * priority * price_bonus * key_match_bonus
 
         ranked_sources.append(RankedSource(
             source=source,

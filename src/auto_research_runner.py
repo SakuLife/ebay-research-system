@@ -1848,20 +1848,50 @@ def main():
             elif best_source:
                 print(f"\n[5/5] Calculating profit...")
 
-                # Estimate weight based on title and price (タイトルから商品タイプを判定)
-                product_type = detect_product_type(ebay_title)
-                weight_est = estimate_weight_from_title(ebay_title, ebay_price)
+                # 重量調査: Gemini優先 → フォールバックで固定推定
+                adjusted_weight_g = 0
+                adjusted_depth = 0.0
+                adjusted_width = 0.0
+                adjusted_height = 0.0
+                weight_source = ""
 
-                # Apply size multiplier from settings
-                adjusted_depth = weight_est.depth_cm * size_multiplier
-                adjusted_width = weight_est.width_cm * size_multiplier
-                adjusted_height = weight_est.height_cm * size_multiplier
+                # まずGeminiで重量調査を試みる
+                gemini_client = GeminiClient()
+                if gemini_client.is_enabled:
+                    print(f"  [Gemini] 重量調査中: {best_source.title[:40]}...")
+                    weight_research = gemini_client.research_product_weight(
+                        product_title=best_source.title,
+                        product_url=best_source.source_url
+                    )
+                    if weight_research and weight_research.applied_weight_kg > 0:
+                        adjusted_weight_g = weight_research.applied_weight_g
+                        adjusted_depth = weight_research.packed_depth_cm
+                        adjusted_width = weight_research.packed_width_cm
+                        adjusted_height = weight_research.packed_height_cm
+                        weight_type = "容積重量" if weight_research.is_volumetric_applied else "実重量"
+                        weight_source = f"Gemini調査({weight_type})"
+                        print(f"  [Gemini] 商品サイズ: {weight_research.product_depth_cm:.1f}x{weight_research.product_width_cm:.1f}x{weight_research.product_height_cm:.1f}cm, {weight_research.product_weight_kg:.2f}kg")
+                        print(f"  [Gemini] 梱包後: {adjusted_depth:.1f}x{adjusted_width:.1f}x{adjusted_height:.1f}cm, {weight_research.packed_weight_kg:.2f}kg")
+                        print(f"  [Gemini] 容積重量: {weight_research.volumetric_weight_kg:.2f}kg")
+                        print(f"  [Gemini] 適用重量: {weight_research.applied_weight_kg:.2f}kg ({weight_type})")
+                    else:
+                        print(f"  [Gemini] 重量調査失敗 → フォールバック")
 
-                # 重量は推定値をそのまま使用（カテゴリ別上限が適用済み）
-                adjusted_weight_g = weight_est.applied_weight_g
+                # Gemini失敗時は固定推定
+                if adjusted_weight_g <= 0:
+                    product_type = detect_product_type(ebay_title)
+                    weight_est = estimate_weight_from_title(ebay_title, ebay_price)
 
-                print(f"  [INFO] Product type: {product_type}")
-                print(f"  [INFO] Weight estimate: {adjusted_weight_g}g ({weight_est.estimation_basis})")
+                    # Apply size multiplier from settings
+                    adjusted_depth = weight_est.depth_cm * size_multiplier
+                    adjusted_width = weight_est.width_cm * size_multiplier
+                    adjusted_height = weight_est.height_cm * size_multiplier
+                    adjusted_weight_g = weight_est.applied_weight_g
+                    weight_source = f"固定推定({weight_est.estimation_basis})"
+
+                    print(f"  [INFO] Product type: {product_type}")
+
+                print(f"  [INFO] Weight: {adjusted_weight_g}g ({weight_source})")
                 print(f"  [INFO] Dimensions: {adjusted_depth:.1f}x{adjusted_width:.1f}x{adjusted_height:.1f}cm")
 
                 try:

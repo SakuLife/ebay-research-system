@@ -720,8 +720,9 @@ class SerpApiClient:
                     source = item.get("source", "")
                     thumbnail = item.get("thumbnail", "")
 
-                    # リンク取得（優先順位: product_link > source_link > sellers[0].link）
-                    link = item.get("product_link", "") or item.get("source_link", "")
+                    # リンク取得（優先順位: link > product_link > source_link > sellers[0].link）
+                    # 'link'フィールドが直接の商品URLを持つことがある
+                    link = item.get("link", "") or item.get("product_link", "") or item.get("source_link", "")
 
                     # sellersがあればそこから直接リンクを取得
                     if not link or "google.com" in link:
@@ -752,10 +753,12 @@ class SerpApiClient:
                     # 最終的にgoogle.comのURLしかない場合はスキップ
                     if not link or "google.com" in link:
                         skipped_google_urls += 1
-                        # デバッグ: スキップされたURLを出力
+                        # デバッグ: スキップされたURL と利用可能なフィールドを出力
                         if skipped_google_urls <= 3:  # 最初の3件だけ表示
                             original_link = item.get("product_link", "") or item.get("source_link", "")
-                            print(f"    [DEBUG] Skipped google URL: {original_link[:80]}...")
+                            available_keys = [k for k in item.keys() if 'link' in k.lower() or 'url' in k.lower()]
+                            print(f"    [DEBUG] Skipped: {original_link[:60]}...")
+                            print(f"    [DEBUG] Available URL fields: {available_keys}, source={source}")
                         continue
 
                     # Parse price
@@ -929,6 +932,7 @@ class SerpApiClient:
             items = []
             excluded_count = 0
 
+            google_url_count = 0
             for item in visual_matches[:max_results * 3]:  # 余裕を持って取得
                 try:
                     title = item.get("title", "")
@@ -938,6 +942,16 @@ class SerpApiClient:
                     # リンクが空の場合はスキップ
                     if not link:
                         continue
+
+                    # google.comのURLはスキップ（実際の商品ページではない）
+                    if "google.com" in link:
+                        # リダイレクトURLから実URLを抽出を試みる
+                        extracted_url = self._extract_url_from_google_redirect(link)
+                        if extracted_url:
+                            link = extracted_url
+                        else:
+                            google_url_count += 1
+                            continue
 
                     # 除外サイトチェック（フリマ除外 or 常に除外）
                     if self._is_excluded_site(link, condition):
@@ -1008,6 +1022,8 @@ class SerpApiClient:
                     print(f"  [WARN] Failed to parse visual match: {e}")
                     continue
 
+            if google_url_count > 0:
+                print(f"  [SerpApi] Skipped {google_url_count} google.com URLs")
             if excluded_count > 0:
                 print(f"  [SerpApi] Excluded {excluded_count} sites (condition={condition})")
             print(f"  [SerpApi] Found {len(items)} valid matches")

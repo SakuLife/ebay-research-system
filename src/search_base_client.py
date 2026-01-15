@@ -54,13 +54,15 @@ class SearchBaseClient:
             worksheet.update(range_name="B10", values=[[int(source_price_jpy)]], value_input_option='USER_ENTERED')
             print(f"  [検索ベース] B10 ← {int(source_price_jpy)} 円（仕入値）")
 
-            # C10: 売値（$）
-            worksheet.update(range_name="C10", values=[[ebay_price_usd]], value_input_option='USER_ENTERED')
-            print(f"  [検索ベース] C10 ← ${ebay_price_usd} （売値）")
+            # C10: 売値（$）- 小数第1位まで
+            ebay_price_rounded = round(ebay_price_usd, 1)
+            worksheet.update(range_name="C10", values=[[ebay_price_rounded]], value_input_option='USER_ENTERED')
+            print(f"  [検索ベース] C10 ← ${ebay_price_rounded:.1f} （売値）")
 
-            # D10: 送料（$）
-            worksheet.update(range_name="D10", values=[[ebay_shipping_usd]], value_input_option='USER_ENTERED')
-            print(f"  [検索ベース] D10 ← ${ebay_shipping_usd} （送料）")
+            # D10: 送料（$）- 小数第1位まで
+            ebay_shipping_rounded = round(ebay_shipping_usd, 1)
+            worksheet.update(range_name="D10", values=[[ebay_shipping_rounded]], value_input_option='USER_ENTERED')
+            print(f"  [検索ベース] D10 ← ${ebay_shipping_rounded:.1f} （送料）")
 
             # E10: 適用重量（g） - 数式なのでスキップ
             print(f"  [検索ベース] E10 ← スキップ（数式セル）")

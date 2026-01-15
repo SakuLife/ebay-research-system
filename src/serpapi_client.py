@@ -556,6 +556,71 @@ class SerpApiClient:
         except Exception:
             return None
 
+    def _extract_product_id_from_google_shopping(self, google_url: str) -> Optional[str]:
+        """
+        Google Shopping の商品ページURLから product_id を抽出する.
+
+        Args:
+            google_url: google.com/shopping/product/xxx 形式のURL
+
+        Returns:
+            product_id、または抽出できない場合はNone
+        """
+        if not google_url:
+            return None
+
+        # /shopping/product/12345678901234567890 形式からIDを抽出
+        match = re.search(r'/shopping/product/(\d+)', google_url)
+        if match:
+            return match.group(1)
+        return None
+
+    def _fetch_seller_link_from_product_id(self, product_id: str) -> Optional[str]:
+        """
+        Google Product APIを使って商品IDから実際の販売者リンクを取得する.
+
+        Args:
+            product_id: Google Shopping の商品ID
+
+        Returns:
+            販売者の実際のURL、または取得できない場合はNone
+        """
+        if not self.is_enabled or not product_id:
+            return None
+
+        try:
+            params = {
+                "engine": "google_product",
+                "product_id": product_id,
+                "hl": "ja",
+                "gl": "jp",
+                "api_key": self.api_key
+            }
+
+            search = GoogleSearch(params)
+            results = search.get_dict()
+
+            if "error" in results:
+                return None
+
+            # sellersセクションから最初のリンクを取得
+            sellers = results.get("sellers_results", {}).get("online_sellers", [])
+            if sellers and len(sellers) > 0:
+                link = sellers[0].get("link", "")
+                if link and "google.com" not in link:
+                    return link
+
+            # 代替: product_results.source から
+            product_results = results.get("product_results", {})
+            source_link = product_results.get("source", "")
+            if source_link and "google.com" not in source_link:
+                return source_link
+
+            return None
+        except Exception as e:
+            print(f"  [WARN] Failed to fetch seller link for product_id {product_id}: {e}")
+            return None
+
     def search_google_shopping_jp(
         self,
         keyword: str,
@@ -613,6 +678,8 @@ class SerpApiClient:
 
             items = []
             skipped_google_urls = 0
+            product_api_calls = 0
+            max_product_api_calls = 3  # API使用量を制限（追加のクレジット消費を抑える）
 
             for item in shopping_results[:max_results * 2]:  # 余裕を持って取得
                 try:
@@ -636,6 +703,18 @@ class SerpApiClient:
                         extracted_url = self._extract_url_from_google_redirect(link)
                         if extracted_url:
                             link = extracted_url
+
+                    # /shopping/product/ 形式のURLの場合、product_idを抽出してAPI経由で実URLを取得
+                    # ただしAPI使用量を制限
+                    if link and "google.com" in link and "/shopping/product/" in link:
+                        if product_api_calls < max_product_api_calls:
+                            product_id = self._extract_product_id_from_google_shopping(link)
+                            if product_id:
+                                product_api_calls += 1
+                                seller_link = self._fetch_seller_link_from_product_id(product_id)
+                                if seller_link:
+                                    link = seller_link
+                                    print(f"  [SerpApi] Resolved product_id {product_id} -> {seller_link[:50]}...")
 
                     # 最終的にgoogle.comのURLしかない場合はスキップ
                     if not link or "google.com" in link:

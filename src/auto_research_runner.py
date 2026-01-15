@@ -78,6 +78,153 @@ def try_scrape_zero_price_items(sources: list, max_scrape: int = 5) -> int:
     return scraped_count
 
 
+# =============================================================================
+# 数量抽出・マッチング関数
+# =============================================================================
+
+@dataclass
+class QuantityInfo:
+    """商品の数量情報."""
+    quantity: int  # 数量（1 = 単品）
+    is_set: bool  # セット商品かどうか
+    is_complete: bool  # 全巻・コンプリートセットか
+    vol_range: tuple  # (開始巻, 終了巻) または None
+    pattern_matched: str  # マッチしたパターン（デバッグ用）
+
+
+def extract_quantity_from_title(title: str, is_japanese: bool = False) -> QuantityInfo:
+    """
+    商品タイトルから数量を抽出する.
+
+    英語パターン:
+    - "Vol.0-45" → 46巻
+    - "Set of 11" → 11個
+    - "10 pcs" / "10pcs" → 10個
+    - "Complete Set" → セット（数量不明）
+    - "Bundle" / "Lot" → セット（数量不明）
+
+    日本語パターン:
+    - "全45巻" → 45巻
+    - "1-45巻セット" → 45巻
+    - "全巻セット" → 全巻（数量不明）
+    - "〇〇セット" → セット
+
+    Args:
+        title: 商品タイトル
+        is_japanese: 日本語タイトルかどうか
+
+    Returns:
+        QuantityInfo
+    """
+    if not title:
+        return QuantityInfo(1, False, False, None, "no_title")
+
+    title_lower = title.lower()
+
+    # ===== 英語パターン =====
+    if not is_japanese:
+        # "Vol.0-45" / "Vol 1-45" / "Volume 1 - 45" → 範囲から数量計算
+        vol_range_match = re.search(r'vol(?:ume)?\.?\s*(\d+)\s*[-~～]\s*(\d+)', title_lower)
+        if vol_range_match:
+            start = int(vol_range_match.group(1))
+            end = int(vol_range_match.group(2))
+            count = end - start + 1
+            return QuantityInfo(count, True, True, (start, end), f"vol_range_{start}-{end}")
+
+        # "Set of 11" / "Set of 3"
+        set_of_match = re.search(r'set\s+of\s+(\d+)', title_lower)
+        if set_of_match:
+            count = int(set_of_match.group(1))
+            return QuantityInfo(count, True, False, None, f"set_of_{count}")
+
+        # "11 pcs" / "11pcs" / "11 pieces"
+        pcs_match = re.search(r'(\d+)\s*(?:pcs|pieces?)\b', title_lower)
+        if pcs_match:
+            count = int(pcs_match.group(1))
+            return QuantityInfo(count, True, False, None, f"pcs_{count}")
+
+        # "Complete Set" / "Complete Manga Set"
+        if 'complete' in title_lower and ('set' in title_lower or 'manga' in title_lower):
+            return QuantityInfo(0, True, True, None, "complete_set")
+
+        # "Bundle" / "Lot"
+        if 'bundle' in title_lower or 'lot' in title_lower:
+            # "lot of X" は上でキャッチされるので、ここは数量不明
+            return QuantityInfo(0, True, False, None, "bundle_lot")
+
+    # ===== 日本語パターン =====
+    # "全45巻" / "全45冊"
+    zen_match = re.search(r'全(\d+)[巻冊]', title)
+    if zen_match:
+        count = int(zen_match.group(1))
+        return QuantityInfo(count, True, True, None, f"zen_{count}")
+
+    # "1-45巻" / "1〜45巻" / "1～45巻セット"
+    jp_range_match = re.search(r'(\d+)\s*[-~～]\s*(\d+)\s*[巻冊]', title)
+    if jp_range_match:
+        start = int(jp_range_match.group(1))
+        end = int(jp_range_match.group(2))
+        count = end - start + 1
+        return QuantityInfo(count, True, True, (start, end), f"jp_range_{start}-{end}")
+
+    # "全巻セット" / "全巻" （数量不明）
+    if '全巻' in title:
+        return QuantityInfo(0, True, True, None, "zenkan")
+
+    # "〇〇セット" / "〇個セット"
+    set_match = re.search(r'(\d+)\s*[個点枚体]?\s*セット', title)
+    if set_match:
+        count = int(set_match.group(1))
+        return QuantityInfo(count, True, False, None, f"set_{count}")
+
+    # 一般的なセット
+    if 'セット' in title:
+        return QuantityInfo(0, True, False, None, "set_generic")
+
+    # 単品（上記いずれにもマッチしない）
+    return QuantityInfo(1, False, False, None, "single")
+
+
+def calculate_quantity_match_score(ebay_qty: QuantityInfo, source_qty: QuantityInfo) -> float:
+    """
+    eBayと仕入先の数量マッチ度を計算する.
+
+    Returns:
+        0.0 (不一致) ～ 1.0 (完全一致)
+    """
+    # 両方とも単品 → 完全一致
+    if not ebay_qty.is_set and not source_qty.is_set:
+        return 1.0
+
+    # eBayがセットで、仕入先が単品 → 不一致（最も危険なケース）
+    if ebay_qty.is_set and not source_qty.is_set:
+        return 0.0
+
+    # eBayが単品で、仕入先がセット → 弱い不一致
+    if not ebay_qty.is_set and source_qty.is_set:
+        return 0.3
+
+    # 両方ともセット
+    # 数量が分かっている場合
+    if ebay_qty.quantity > 0 and source_qty.quantity > 0:
+        if ebay_qty.quantity == source_qty.quantity:
+            return 1.0  # 完全一致
+        elif abs(ebay_qty.quantity - source_qty.quantity) <= 1:
+            return 0.8  # 1個差は許容（巻数の数え方の違い）
+        else:
+            # 大きく異なる場合
+            ratio = min(ebay_qty.quantity, source_qty.quantity) / max(ebay_qty.quantity, source_qty.quantity)
+            return ratio * 0.5  # 比率ベースで減点
+
+    # 数量不明だがセット同士 → 中程度の一致
+    if ebay_qty.is_complete and source_qty.is_complete:
+        return 0.7  # 両方ともコンプリート
+    if ebay_qty.is_set and source_qty.is_set:
+        return 0.5  # 両方ともセットだが詳細不明
+
+    return 0.3  # それ以外
+
+
 def encode_url_with_japanese(url: str) -> str:
     """
     日本語を含むURLを正しくエンコードする.
@@ -1588,14 +1735,24 @@ def main():
                     print(f"         Best candidate: {all_sources[0].title[:50]}...")
                     error_reason = "類似商品なし"
 
-            # トップ3の仕入先を処理（価格スクレイピング含む）
+            # トップ3の仕入先を処理（数量チェック + 価格スクレイピング）
             total_source_price = 0
             similarity = 0.0
             needs_price_check = False  # 大手ECで価格なしの場合
 
-            # 全ての候補に対してスクレイピングを試みる
+            # eBayタイトルから数量を抽出
+            ebay_quantity = extract_quantity_from_title(ebay_title, is_japanese=False)
+            if ebay_quantity.is_set:
+                qty_str = f"{ebay_quantity.quantity}個" if ebay_quantity.quantity > 0 else "数量不明"
+                print(f"\n  [数量チェック] eBay: セット商品 ({qty_str}, パターン: {ebay_quantity.pattern_matched})")
+            else:
+                print(f"\n  [数量チェック] eBay: 単品")
+
+            # 全ての候補に対して数量チェック + 価格スクレイピング
             if top_sources:
-                print(f"\n  [INFO] Processing top {len(top_sources)} sources...")
+                print(f"\n  [INFO] Processing top {len(top_sources)} sources (数量チェック込み)...")
+                candidates_with_qty = []
+
                 for rank, ranked_src in enumerate(top_sources, 1):
                     src = ranked_src.source
                     src_price = src.source_price_jpy + src.source_shipping_jpy
@@ -1606,28 +1763,77 @@ def main():
                         scraped = scrape_price_for_url(src.source_url)
                         if scraped.success and scraped.price > 0:
                             src.source_price_jpy = scraped.price
+                            src_price = scraped.price
                             print(f"         → JPY {scraped.price:,.0f} (scraped)")
                         else:
                             print(f"         → 取得失敗: {scraped.error_message}")
+
+                    # 仕入先タイトルから数量を抽出
+                    source_quantity = extract_quantity_from_title(src.title, is_japanese=True)
+                    qty_match_score = calculate_quantity_match_score(ebay_quantity, source_quantity)
+
+                    # 数量情報をログ出力
+                    if source_quantity.is_set:
+                        src_qty_str = f"セット({source_quantity.quantity}個)" if source_quantity.quantity > 0 else "セット"
                     else:
-                        print(f"    [{rank}位] {src.source_site} - JPY {src_price:,.0f}")
+                        src_qty_str = "単品"
 
-                # 1位の情報を取得（利益計算用）
-                best_source = top_sources[0].source
-                total_source_price = best_source.source_price_jpy + best_source.source_shipping_jpy
-                similarity = top_sources[0].similarity
+                    price_str = f"JPY {src_price:,.0f}" if src_price > 0 else "価格不明"
+                    print(f"    [{rank}位] {src.source_site} - {price_str}")
+                    print(f"         数量: {src_qty_str} (マッチ度: {qty_match_score:.0%})")
+                    print(f"         タイトル: {src.title[:45]}...")
 
-                # 1位の価格がまだ0なら「要価格確認」
-                if total_source_price <= 0:
-                    needs_price_check = True
-                    print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
+                    candidates_with_qty.append({
+                        "ranked_src": ranked_src,
+                        "src_price": src_price,
+                        "qty_match": qty_match_score,
+                        "source_qty": source_quantity
+                    })
+
+                # 数量マッチ度でフィルタリング＆再ランキング
+                # 数量不一致（0.0）は除外、それ以外はスコアで再評価
+                valid_candidates = [c for c in candidates_with_qty if c["qty_match"] > 0.0]
+
+                if not valid_candidates:
+                    # 全て数量不一致の場合
+                    print(f"\n  [WARN] 全候補が数量不一致！eBay: {ebay_quantity.pattern_matched}")
+                    for c in candidates_with_qty:
+                        print(f"         - {c['ranked_src'].source.source_site}: {c['source_qty'].pattern_matched}")
+                    error_reason = "数量不一致"
+                    best_source = None
                 else:
-                    print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+                    # 数量マッチ度 × 既存スコアで再ランキング
+                    valid_candidates.sort(
+                        key=lambda c: c["qty_match"] * c["ranked_src"].score,
+                        reverse=True
+                    )
 
-                print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
-                if search_method != "画像検索":
-                    print(f"  [INFO] Title similarity: {similarity:.0%}")
-                print(f"  [INFO] URL: {best_source.source_url}")
+                    # ベスト候補を選択
+                    best_candidate = valid_candidates[0]
+                    best_source = best_candidate["ranked_src"].source
+                    total_source_price = best_candidate["src_price"]
+                    similarity = best_candidate["ranked_src"].similarity
+
+                    # 選択理由をログ出力
+                    if len(candidates_with_qty) != len(valid_candidates):
+                        excluded = len(candidates_with_qty) - len(valid_candidates)
+                        print(f"\n  [数量チェック結果] {excluded}件を除外、{len(valid_candidates)}件が有効")
+
+                    # 1位の価格がまだ0なら「要価格確認」
+                    if total_source_price <= 0:
+                        needs_price_check = True
+                        print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
+                    else:
+                        print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+
+                    print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
+                    print(f"  [INFO] 数量マッチ度: {best_candidate['qty_match']:.0%}")
+                    if search_method != "画像検索":
+                        print(f"  [INFO] Title similarity: {similarity:.0%}")
+                    print(f"  [INFO] URL: {best_source.source_url}")
+
+                    # top_sourcesを有効な候補だけに更新（スプレッドシート出力用）
+                    top_sources = [c["ranked_src"] for c in valid_candidates]
 
             # Step 5: Calculate profit (with weight estimation)
             profit_no_rebate = 0

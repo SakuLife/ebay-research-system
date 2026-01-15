@@ -752,6 +752,10 @@ class SerpApiClient:
                     # 最終的にgoogle.comのURLしかない場合はスキップ
                     if not link or "google.com" in link:
                         skipped_google_urls += 1
+                        # デバッグ: スキップされたURLを出力
+                        if skipped_google_urls <= 3:  # 最初の3件だけ表示
+                            original_link = item.get("product_link", "") or item.get("source_link", "")
+                            print(f"    [DEBUG] Skipped google URL: {original_link[:80]}...")
                         continue
 
                     # Parse price

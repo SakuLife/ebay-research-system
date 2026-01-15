@@ -1,6 +1,8 @@
 """Price Scraper - Scrape actual prices from EC site pages when API returns 0."""
 
 import re
+import random
+import time
 import requests
 from typing import Optional
 from dataclasses import dataclass
@@ -19,20 +21,41 @@ class ScrapedPrice:
 class PriceScraper:
     """ECサイトから価格をスクレイピングで取得するクライアント."""
 
-    # リクエストタイムアウト（秒）- 楽天は遅いことがあるので延長
-    REQUEST_TIMEOUT = 15
+    # リクエストタイムアウト（秒）
+    REQUEST_TIMEOUT = 20  # 楽天は遅いことがあるので延長
 
-    # User-Agent（ブロック回避用）
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-    }
+    # User-Agent リスト（ランダムに選択）
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    ]
 
     def __init__(self):
         """初期化."""
         self.session = requests.Session()
-        self.session.headers.update(self.HEADERS)
+        self._update_headers()
+
+    def _update_headers(self):
+        """ヘッダーを更新（Anti-bot対策）."""
+        headers = {
+            "User-Agent": random.choice(self.USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        }
+        self.session.headers.update(headers)
 
     def scrape_price(self, url: str) -> ScrapedPrice:
         """
@@ -69,26 +92,44 @@ class PriceScraper:
         - data-price="17900"
         - "price":17900
         """
-        try:
-            print(f"    [Scrape] Fetching Rakuten page...")
-            response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
-            response.raise_for_status()
-            html = response.text
+        max_retries = 2
 
-            price = self._extract_rakuten_price(html)
+        for attempt in range(max_retries):
+            try:
+                # リトライ時はヘッダーを更新
+                if attempt > 0:
+                    self._update_headers()
+                    time.sleep(0.5)
 
-            if price > 0:
-                print(f"    [Scrape] Rakuten price found: JPY {price:,.0f}")
-                return ScrapedPrice(price=price, currency="JPY", source="楽天", success=True)
-            else:
+                print(f"    [Scrape] Fetching Rakuten page..." + (f" (retry {attempt + 1})" if attempt > 0 else ""))
+                response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
+                response.raise_for_status()
+                html = response.text
+
+                price = self._extract_rakuten_price(html)
+
+                if price > 0:
+                    print(f"    [Scrape] Rakuten price found: JPY {price:,.0f}")
+                    return ScrapedPrice(price=price, currency="JPY", source="楽天", success=True)
+
+                # 価格が見つからない場合、リトライ
+                if attempt < max_retries - 1:
+                    continue
+
                 return ScrapedPrice(price=0, success=False, error_message="Price not found in HTML")
 
-        except requests.exceptions.Timeout:
-            return ScrapedPrice(price=0, success=False, error_message="Request timeout")
-        except requests.exceptions.RequestException as e:
-            return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
-        except Exception as e:
-            return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}")
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    continue
+                return ScrapedPrice(price=0, success=False, error_message="Request timeout")
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    continue
+                return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
+            except Exception as e:
+                return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}")
+
+        return ScrapedPrice(price=0, success=False, error_message="Max retries exceeded")
 
     def _extract_rakuten_price(self, html: str) -> float:
         """
@@ -226,26 +267,48 @@ class PriceScraper:
         Amazon.co.jpの商品ページから価格を取得する.
 
         Amazonは通常のスクレイピングが難しいため、
-        基本的なパターンのみ試す.
+        リトライとサイト固有ヘッダーで対策.
         """
-        try:
-            print(f"    [Scrape] Fetching Amazon page...")
-            response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
-            response.raise_for_status()
-            html = response.text
+        max_retries = 2
 
-            price = self._extract_amazon_price(html)
+        for attempt in range(max_retries):
+            try:
+                # リトライ時はヘッダーを更新（User-Agentをランダム化）
+                if attempt > 0:
+                    self._update_headers()
+                    time.sleep(1)  # リトライ前に少し待機
 
-            if price > 0:
-                print(f"    [Scrape] Amazon price found: JPY {price:,.0f}")
-                return ScrapedPrice(price=price, currency="JPY", source="Amazon", success=True)
-            else:
+                # Amazon固有のヘッダー
+                headers = {
+                    "Referer": "https://www.google.com/",
+                    "Host": "www.amazon.co.jp",
+                }
+
+                print(f"    [Scrape] Fetching Amazon page..." + (f" (retry {attempt + 1})" if attempt > 0 else ""))
+                response = self.session.get(url, timeout=self.REQUEST_TIMEOUT, headers=headers)
+                response.raise_for_status()
+                html = response.text
+
+                price = self._extract_amazon_price(html)
+
+                if price > 0:
+                    print(f"    [Scrape] Amazon price found: JPY {price:,.0f}")
+                    return ScrapedPrice(price=price, currency="JPY", source="Amazon", success=True)
+
+                # 価格が見つからない場合、リトライ
+                if attempt < max_retries - 1:
+                    continue
+
                 return ScrapedPrice(price=0, success=False, error_message="Price not found (Amazon anti-bot)")
 
-        except requests.exceptions.RequestException as e:
-            return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
-        except Exception as e:
-            return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}")
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    continue
+                return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
+            except Exception as e:
+                return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}")
+
+        return ScrapedPrice(price=0, success=False, error_message="Max retries exceeded")
 
     def _extract_amazon_price(self, html: str) -> float:
         """

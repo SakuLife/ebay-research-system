@@ -690,19 +690,19 @@ EXCLUDED_URL_PATTERNS = [
 
 def is_allowed_source_url(url: str) -> bool:
     """
-    URLが日本国内の仕入先かどうか判定する.
+    URLが仕入先として許可されるかどうか判定する.
 
-    許可されるサイト:
-    - ALLOWED_JAPANESE_DOMAINSに含まれるサイト
-    - .jpドメイン（未知の日本サイト）
+    ブラックリスト方式：除外パターンに一致しなければOK.
+    これにより、未知のショップでも価格が取れていれば候補になる.
 
     除外されるサイト:
     - 海外Amazon、AliExpress、Shein等の海外サイト
     - PDF、eBay等
+    - 検索/カテゴリページ（個別商品ではない）
 
     Returns:
-        True: 許可（日本国内サイト）
-        False: 除外（海外サイト）
+        True: 許可
+        False: 除外
     """
     if not url:
         return False
@@ -714,17 +714,20 @@ def is_allowed_source_url(url: str) -> bool:
         if pattern in url_lower:
             return False
 
-    # 許可リスト（日本国内）に一致したらOK
-    for domain in ALLOWED_JAPANESE_DOMAINS:
-        if domain in url_lower:
-            return True
+    # 検索/カテゴリページは除外（個別商品ではない）
+    search_page_patterns = [
+        "/search?", "/search/",  # 検索ページ
+        "/s?k=", "/s/",          # Amazon検索
+        "/category/", "/genre/", # カテゴリページ
+        "/list/", "/browse/",    # 一覧ページ
+        "/tag/", "/tags/",       # タグページ
+    ]
+    for pattern in search_page_patterns:
+        if pattern in url_lower:
+            return False
 
-    # どちらにも一致しない場合：
-    # .jpドメインなら許可（未知の日本サイト）
-    if ".co.jp" in url_lower or ".jp/" in url_lower:
-        return True
-
-    return False
+    # 除外パターンに一致しなければOK（ブラックリスト方式）
+    return True
 
 
 # 仕入れ優先サイト（再現性が高い、在庫がある）
@@ -908,12 +911,17 @@ def find_top_matching_sources(
 ) -> List[RankedSource]:
     """
     eBayタイトルにマッチする仕入先をスコア順に最大N件返す.
-    類似度 × conditionスコア × 仕入れ優先度 で総合評価.
+    類似度 × conditionスコア × 仕入れ優先度 × 価格ボーナス で総合評価.
+
+    改善点:
+    - 類似度は足切りではなく、スコアの一部として使用
+    - 価格がある候補を価格不明より優先
+    - 類似度が極端に低い（<5%）場合のみ除外
 
     Args:
         ebay_title: eBayの商品タイトル
         sources: 仕入先候補リスト
-        min_similarity: 最低類似度
+        min_similarity: 最低類似度（デフォルト0.2、価格ありなら0.05まで緩和）
         prefer_sourcing: 仕入れ可能サイトを優先するか
         require_price: 価格が必須かどうか（Trueなら価格0円は除外）
         top_n: 返す件数（デフォルト3）
@@ -928,9 +936,11 @@ def find_top_matching_sources(
     ranked_sources: List[RankedSource] = []
     excluded_urls = 0
     category_excluded = 0
+    low_similarity_excluded = 0
     seen_urls = set()  # 重複URL除外用
 
     MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
+    ABSOLUTE_MIN_SIMILARITY = 0.05  # 絶対最低類似度（これ以下は完全除外）
 
     for source in sources:
         # 許可されていないURL（海外Amazon、PDF等）は除外
@@ -949,15 +959,22 @@ def find_top_matching_sources(
             category_excluded += 1
             continue
 
+        # 価格の有無を判定
+        has_price = source.source_price_jpy > 0
+        is_major_ec = any(domain in source.source_url for domain in MAJOR_EC_DOMAINS)
+
         # 価格0円の処理
         # 大手ECサイトは価格0でも候補に含める（後で手動確認）
-        is_major_ec = any(domain in source.source_url for domain in MAJOR_EC_DOMAINS)
-        if require_price and source.source_price_jpy <= 0 and not is_major_ec:
+        if require_price and not has_price and not is_major_ec:
             continue
 
         # 類似度（型番一致ボーナス込み）
         similarity = calculate_title_similarity(ebay_title, source.title)
-        if similarity < min_similarity:
+
+        # 類似度閾値の判定（価格がある場合は緩和）
+        effective_min_similarity = ABSOLUTE_MIN_SIMILARITY if has_price else min_similarity
+        if similarity < effective_min_similarity:
+            low_similarity_excluded += 1
             continue
 
         # conditionスコア
@@ -966,8 +983,12 @@ def find_top_matching_sources(
         # 仕入れ優先度
         priority = calculate_source_priority(source.source_site) if prefer_sourcing else 1.0
 
-        # 総合スコア = 類似度 × conditionスコア × 優先度
-        total_score = similarity * condition_score * priority
+        # 価格ボーナス（価格がある候補を優先）
+        # 価格あり: 1.5倍、価格なし: 0.3倍（大幅にペナルティ）
+        price_bonus = 1.5 if has_price else 0.3
+
+        # 総合スコア = 類似度 × conditionスコア × 優先度 × 価格ボーナス
+        total_score = similarity * condition_score * priority * price_bonus
 
         ranked_sources.append(RankedSource(
             source=source,
@@ -977,12 +998,14 @@ def find_top_matching_sources(
             priority=priority
         ))
 
-    if excluded_urls > 0 or category_excluded > 0:
+    if excluded_urls > 0 or category_excluded > 0 or low_similarity_excluded > 0:
         parts = []
         if excluded_urls > 0:
             parts.append(f"海外/PDF除外: {excluded_urls}件")
         if category_excluded > 0:
             parts.append(f"カテゴリ除外: {category_excluded}件")
+        if low_similarity_excluded > 0:
+            parts.append(f"低類似度除外: {low_similarity_excluded}件")
         print(f"    ({', '.join(parts)})")
 
     # スコア降順でソートして上位N件を返す

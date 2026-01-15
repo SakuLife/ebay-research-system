@@ -19,8 +19,8 @@ class ScrapedPrice:
 class PriceScraper:
     """ECサイトから価格をスクレイピングで取得するクライアント."""
 
-    # リクエストタイムアウト（秒）
-    REQUEST_TIMEOUT = 10
+    # リクエストタイムアウト（秒）- 楽天は遅いことがあるので延長
+    REQUEST_TIMEOUT = 15
 
     # User-Agent（ブロック回避用）
     HEADERS = {
@@ -98,10 +98,40 @@ class PriceScraper:
         """
         prices_found = []
 
+        # パターン0: 構造化データ（JSON-LD）から抽出（最優先）
+        # <script type="application/ld+json">{"@type":"Product","offers":{"price":17900}}</script>
+        jsonld_matches = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
+        for jsonld in jsonld_matches:
+            try:
+                import json
+                data = json.loads(jsonld)
+                # Product タイプの offers から価格を取得
+                if isinstance(data, dict):
+                    offers = data.get("offers", {})
+                    if isinstance(offers, dict):
+                        price = offers.get("price") or offers.get("lowPrice")
+                        if price:
+                            prices_found.append(float(str(price).replace(',', '')))
+                    elif isinstance(offers, list):
+                        for offer in offers:
+                            price = offer.get("price") or offer.get("lowPrice")
+                            if price:
+                                prices_found.append(float(str(price).replace(',', '')))
+            except:
+                pass
+
         # パターン1: 販売価格 class="price2" や "price--xxxxx"
         # <span class="price2">17,900円</span>
         pattern1 = re.findall(r'class="price[^"]*"[^>]*>\s*[¥￥]?([\d,]+)\s*円?', html, re.IGNORECASE)
         for p in pattern1:
+            try:
+                prices_found.append(float(p.replace(',', '')))
+            except:
+                pass
+
+        # パターン1b: data-testid属性（React/Next.js用）
+        pattern1b = re.findall(r'data-testid="[^"]*price[^"]*"[^>]*>\s*[¥￥]?([\d,]+)', html, re.IGNORECASE)
+        for p in pattern1b:
             try:
                 prices_found.append(float(p.replace(',', '')))
             except:
@@ -117,12 +147,23 @@ class PriceScraper:
                 pass
 
         # パターン3: JSON内の価格（商品データ）
-        # "price":17900 or "price": 17900
-        pattern3 = re.findall(r'"price"\s*:\s*([\d]+)', html)
+        # "price":17900 or "price": 17900 or "price":"17900"
+        pattern3 = re.findall(r'"price"\s*:\s*"?([\d]+)"?', html)
         for p in pattern3:
             try:
                 val = float(p)
                 if val >= 100:  # 100円以上
+                    prices_found.append(val)
+            except:
+                pass
+
+        # パターン3b: Next.js __NEXT_DATA__ からの価格抽出
+        # "displayPrice":17900 or "unitPrice":17900 or "salePrice":17900
+        pattern3b = re.findall(r'"(?:displayPrice|unitPrice|salePrice|originalPrice)"\s*:\s*([\d]+)', html)
+        for p in pattern3b:
+            try:
+                val = float(p)
+                if val >= 100:
                     prices_found.append(val)
             except:
                 pass
@@ -150,6 +191,14 @@ class PriceScraper:
         # パターン6: item-price / itemPrice クラス
         pattern6 = re.findall(r'(?:item-price|itemPrice)[^>]*>\s*[¥￥]?([\d,]+)', html, re.IGNORECASE)
         for p in pattern6:
+            try:
+                prices_found.append(float(p.replace(',', '')))
+            except:
+                pass
+
+        # パターン7: Rakuten特有のPriceWrapper
+        pattern7 = re.findall(r'(?:PriceWrapper|priceArea)[^>]*>\s*[¥￥]?([\d,]+)', html, re.IGNORECASE)
+        for p in pattern7:
             try:
                 prices_found.append(float(p.replace(',', '')))
             except:

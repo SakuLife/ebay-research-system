@@ -529,6 +529,11 @@ class SerpApiClient:
         """
         Google.comのリダイレクトURLから実際の商品URLを抽出する.
 
+        対応パターン:
+        - google.com/url?q=https://actual-shop.com/...
+        - google.com/aclk?adurl=https://...
+        - google.co.jp/url?url=https://...
+
         Args:
             google_url: google.comを含むURL
 
@@ -541,19 +546,47 @@ class SerpApiClient:
         try:
             from urllib.parse import urlparse, parse_qs, unquote
 
-            parsed = urlparse(google_url)
+            # URLを複数回デコード（二重エンコード対策）
+            decoded_url = google_url
+            for _ in range(3):
+                new_decoded = unquote(decoded_url)
+                if new_decoded == decoded_url:
+                    break
+                decoded_url = new_decoded
+
+            parsed = urlparse(decoded_url)
             query_params = parse_qs(parsed.query)
 
             # よくあるリダイレクトパラメータ
-            for param in ["url", "q", "u", "adurl", "dest", "redirect"]:
+            redirect_params = ["url", "q", "u", "adurl", "dest", "redirect", "landing"]
+            for param in redirect_params:
                 if param in query_params:
-                    extracted = unquote(query_params[param][0])
+                    extracted = query_params[param][0]
+                    # 複数回デコード
+                    for _ in range(3):
+                        new_extracted = unquote(extracted)
+                        if new_extracted == extracted:
+                            break
+                        extracted = new_extracted
+
                     # google.comでない実際のURLの場合は返す
-                    if extracted and "google.com" not in extracted and extracted.startswith("http"):
-                        return extracted
+                    if extracted and "google.com" not in extracted and "google.co.jp" not in extracted:
+                        if extracted.startswith("http"):
+                            return extracted
+                        # httpで始まらない場合、https://を付与
+                        if "." in extracted and "/" in extracted:
+                            return "https://" + extracted
+
+            # パスにURLが埋め込まれているパターン
+            # 例: /url/https://shop.com/item
+            path = parsed.path
+            if "/url/" in path:
+                url_part = path.split("/url/", 1)[1]
+                if url_part.startswith("http"):
+                    return unquote(url_part)
 
             return None
-        except Exception:
+        except Exception as e:
             return None
 
     def _extract_product_id_from_google_shopping(self, google_url: str) -> Optional[str]:

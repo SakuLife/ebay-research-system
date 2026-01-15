@@ -1067,7 +1067,9 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
         price_col = 6 + (idx * 3)  # 6, 9, 12 (価格)
         row_data[title_col] = result.get("title", "")
         row_data[url_col] = result.get("url", "")
-        row_data[price_col] = str(result.get("price", "")) if result.get("price", 0) > 0 else ""
+        # 価格が0円の場合は「要確認」と表示
+        price = result.get("price", 0)
+        row_data[price_col] = str(int(price)) if price > 0 else "要確認"
 
     # eBay情報
     row_data[13] = data.get("ebay_url", "")  # eBayリンク (N列)

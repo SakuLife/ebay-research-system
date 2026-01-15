@@ -67,7 +67,9 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
     row_data[1] = data.get("ebay_url", "")  # 起点商品リンク
     row_data[2] = data.get("keyword", "")  # キーワード
     row_data[3] = data.get("category_name", "")  # カテゴリ
-    row_data[4] = data.get("category_id", "")  # カテゴリ番号
+    # カテゴリ番号（先頭ゼロを保持するため、'を付けてテキスト扱いに）
+    cat_id = data.get("category_id", "")
+    row_data[4] = f"'{cat_id}" if cat_id else ""  # カテゴリ番号
 
     # ソーシング結果（国内最安①②③）
     sourcing_results = data.get("sourcing_results", [])

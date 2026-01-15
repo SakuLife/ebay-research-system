@@ -25,6 +25,59 @@ from .gemini_client import GeminiClient
 from .price_scraper import scrape_price_for_url
 
 
+# 価格スクレイピング対象の大手ECサイト
+MAJOR_EC_DOMAINS_FOR_SCRAPING = [
+    "amazon.co.jp",
+    "rakuten.co.jp",
+    "shopping.yahoo.co.jp",
+]
+
+
+def try_scrape_zero_price_items(sources: list, max_scrape: int = 5) -> int:
+    """
+    価格0円のアイテムに対してスクレイピングを試みる.
+
+    大手ECサイト（Amazon/楽天/Yahoo）の0円アイテムに対してのみ実行.
+    検索結果取得直後に呼び出すことで、より多くの有効な候補を得る.
+
+    Args:
+        sources: SourceOfferのリスト（価格が更新される）
+        max_scrape: 最大スクレイピング件数（API負荷軽減）
+
+    Returns:
+        価格取得成功件数
+    """
+    scraped_count = 0
+    attempted = 0
+
+    for source in sources:
+        # 既に価格がある場合はスキップ
+        if source.source_price_jpy > 0:
+            continue
+
+        # 大手ECサイト以外はスキップ
+        is_major_ec = any(domain in source.source_url for domain in MAJOR_EC_DOMAINS_FOR_SCRAPING)
+        if not is_major_ec:
+            continue
+
+        # 最大件数に達したら終了
+        if attempted >= max_scrape:
+            break
+
+        attempted += 1
+        print(f"    [Scrape] {source.source_site}: 価格0円 → スクレイピング中...")
+
+        scraped = scrape_price_for_url(source.source_url)
+        if scraped.success and scraped.price > 0:
+            source.source_price_jpy = scraped.price
+            print(f"             → JPY {scraped.price:,.0f} (成功)")
+            scraped_count += 1
+        else:
+            print(f"             → 失敗: {scraped.error_message[:30]}")
+
+    return scraped_count
+
+
 def encode_url_with_japanese(url: str) -> str:
     """
     日本語を含むURLを正しくエンコードする.
@@ -721,7 +774,9 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data[0] = datetime.now().strftime("%Y-%m-%d")  # 日付
     row_data[1] = data.get("keyword", "")  # キーワード
     row_data[2] = data.get("category_name", "")  # カテゴリ
-    row_data[3] = data.get("category_id", "")  # カテゴリ番号
+    # カテゴリ番号（先頭ゼロを保持するため、'を付けてテキスト扱いに）
+    cat_id = data.get("category_id", "")
+    row_data[3] = f"'{cat_id}" if cat_id else ""  # カテゴリ番号
 
     # ソーシング結果（国内最安①②③）- 商品名、リンク、価格
     sourcing_results = data.get("sourcing_results", [])
@@ -1063,6 +1118,15 @@ def main():
                 else:
                     print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, フリマ除外: {condition_skipped})")
 
+                # 価格0円の大手ECアイテムをスクレイピングで再取得
+                if all_sources:
+                    zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
+                    if zero_price_count > 0:
+                        print(f"    [Step 1.5] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
+                        if scraped_count > 0:
+                            print(f"    → {scraped_count}件の価格を取得しました")
+
                 if all_sources:
                     # 候補一覧を表示（類似度付き）
                     print(f"    --- 候補一覧 (スコア順) ---")
@@ -1188,6 +1252,15 @@ def main():
 
                     priced = len([s for s in all_sources if s.source_price_jpy > 0])
                     print(f"    結果: {len(web_results)}件取得 → {len(all_sources)}件有効 (価格あり: {priced}件)")
+
+                # 価格0円の大手ECアイテムをスクレイピングで再取得
+                if all_sources:
+                    zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
+                    if zero_price_count > 0:
+                        print(f"    [Step 2c] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
+                        if scraped_count > 0:
+                            print(f"    → {scraped_count}件の価格を取得しました")
 
                 if all_sources:
                     # 候補一覧を表示（スコア付き）
@@ -1316,6 +1389,15 @@ def main():
 
                     priced = len([s for s in all_sources if s.source_price_jpy > 0])
                     print(f"    結果: {len(web_results)}件取得 → {len(all_sources)}件有効 (価格あり: {priced}件)")
+
+                # 価格0円の大手ECアイテムをスクレイピングで再取得
+                if all_sources:
+                    zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
+                    if zero_price_count > 0:
+                        print(f"    [Step 3c] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
+                        if scraped_count > 0:
+                            print(f"    → {scraped_count}件の価格を取得しました")
 
                 if all_sources:
                     # 候補一覧を表示（スコア付き）

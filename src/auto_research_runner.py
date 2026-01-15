@@ -1785,15 +1785,40 @@ def main():
                     print(f"         数量: {src_qty_str} (マッチ度: {qty_match_score:.0%})")
                     print(f"         タイトル: {src.title[:45]}...")
 
+                    # === セット商品の価格調整 ===
+                    # eBayがセット商品で、仕入先が単品の場合 → 単価×個数
+                    adjusted_price = src_price
+                    price_note = ""
+
+                    if ebay_quantity.is_set and ebay_quantity.quantity > 0:
+                        if not source_quantity.is_set:
+                            # 仕入先が単品 → 単価×個数
+                            if src_price > 0:
+                                adjusted_price = src_price * ebay_quantity.quantity
+                                price_note = f"単価{src_price}×{ebay_quantity.quantity}個"
+                        elif source_quantity.quantity == 0:
+                            # 仕入先もセットだが数量不明 → 単価かセット価格か不明
+                            if src_price > 0:
+                                price_note = "セット価格か単価か不明"
+                                # 価格が極端に安い場合は単価の可能性が高い
+                                if src_price < 2000:  # 2000円未満は単価の可能性
+                                    adjusted_price = src_price * ebay_quantity.quantity
+                                    price_note = f"単価の可能性({src_price}×{ebay_quantity.quantity})"
+
                     candidates_with_qty.append({
                         "ranked_src": ranked_src,
-                        "src_price": src_price,
+                        "src_price": src_price,  # 元の価格
+                        "adjusted_price": adjusted_price,  # 調整後価格
+                        "price_note": price_note,
                         "qty_match": qty_match_score,
                         "source_qty": source_quantity
                     })
 
-                # 数量マッチ度でフィルタリング＆再ランキング
-                # 数量不一致（0.0）は除外、それ以外はスコアで再評価
+                # === 候補の選別とランキング ===
+                # 1. 数量不一致（0.0）は除外
+                # 2. 価格ありを優先（0円は後回し）
+                # 3. 数量マッチ度×スコアでランキング
+
                 valid_candidates = [c for c in candidates_with_qty if c["qty_match"] > 0.0]
 
                 if not valid_candidates:
@@ -1804,29 +1829,45 @@ def main():
                     error_reason = "数量不一致"
                     best_source = None
                 else:
+                    # 価格ありと価格なしで分離
+                    priced_candidates = [c for c in valid_candidates if c["adjusted_price"] > 0]
+                    unpriced_candidates = [c for c in valid_candidates if c["adjusted_price"] <= 0]
+
+                    # 価格ありを優先、なければ価格なしを使用
+                    if priced_candidates:
+                        working_candidates = priced_candidates
+                        if unpriced_candidates:
+                            print(f"\n  [INFO] 価格なし{len(unpriced_candidates)}件をスキップ、価格あり{len(priced_candidates)}件を使用")
+                    else:
+                        working_candidates = unpriced_candidates
+
                     # 数量マッチ度 × 既存スコアで再ランキング
-                    valid_candidates.sort(
+                    working_candidates.sort(
                         key=lambda c: c["qty_match"] * c["ranked_src"].score,
                         reverse=True
                     )
 
                     # ベスト候補を選択
-                    best_candidate = valid_candidates[0]
+                    best_candidate = working_candidates[0]
                     best_source = best_candidate["ranked_src"].source
-                    total_source_price = best_candidate["src_price"]
+                    total_source_price = best_candidate["adjusted_price"]  # 調整後価格を使用
                     similarity = best_candidate["ranked_src"].similarity
+                    price_note = best_candidate["price_note"]
 
                     # 選択理由をログ出力
                     if len(candidates_with_qty) != len(valid_candidates):
                         excluded = len(candidates_with_qty) - len(valid_candidates)
                         print(f"\n  [数量チェック結果] {excluded}件を除外、{len(valid_candidates)}件が有効")
 
-                    # 1位の価格がまだ0なら「要価格確認」
+                    # 価格確認が必要かどうか
                     if total_source_price <= 0:
                         needs_price_check = True
                         print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
                     else:
-                        print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+                        if price_note:
+                            print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f} ({price_note})")
+                        else:
+                            print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
 
                     print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
                     print(f"  [INFO] 数量マッチ度: {best_candidate['qty_match']:.0%}")
@@ -1835,7 +1876,11 @@ def main():
                     print(f"  [INFO] URL: {best_source.source_url}")
 
                     # top_sourcesを有効な候補だけに更新（スプレッドシート出力用）
-                    top_sources = [c["ranked_src"] for c in valid_candidates]
+                    # 価格調整済みの情報も含める
+                    top_sources = [c["ranked_src"] for c in working_candidates]
+                    # 調整後価格をsourceにも反映（スプレッドシート出力用）
+                    for c in working_candidates:
+                        c["ranked_src"].source.source_price_jpy = c["adjusted_price"]
 
             # Step 5: Calculate profit (with weight estimation)
             profit_no_rebate = 0

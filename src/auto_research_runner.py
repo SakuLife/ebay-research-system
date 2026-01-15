@@ -1245,11 +1245,14 @@ def main():
             ebay_condition = "new" if condition == "New" else "any"
             print(f"  [eBay] Location filter: {item_location}, Condition: {ebay_condition}")
 
+            # 出力目標数を達成するため、余裕を持って検索（処理済みスキップ分を考慮）
+            # ただし検索しすぎないよう上限は10件
+            search_buffer = min(items_per_keyword * 5, 10)
             serpapi_results = serpapi_client.search_sold_items(
                 keyword,
                 market=market,
                 min_price=min_price_local,
-                max_results=items_per_keyword * 2,
+                max_results=search_buffer,
                 item_location=item_location,
                 condition=ebay_condition
             )
@@ -1290,13 +1293,13 @@ def main():
             print(f"  [WARN] No eBay listings found for '{keyword}'")
             continue
 
-        # 余裕を持って取得（スキップされる分を考慮）
-        # 実際に処理する件数は items_per_keyword まで
-        items_processed_this_keyword = 0
+        # 出力目標: items_per_keyword 件をスプレッドシートに出力
+        # 処理済みスキップや利益不足スキップがあっても、目標数に達するまで次の商品を試す
+        items_output_this_keyword = 0
 
         for item in active_items:
-            # 指定件数に達したら終了
-            if items_processed_this_keyword >= items_per_keyword:
+            # 出力目標に達したら終了
+            if items_output_this_keyword >= items_per_keyword:
                 break
             ebay_url = item.ebay_item_url
             ebay_price = item.ebay_price
@@ -1983,9 +1986,8 @@ def main():
 
                 # Check if profit meets minimum threshold
                 if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
-                    print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy} → スキップ")
-                    items_processed_this_keyword += 1
-                    continue  # スプレッドシートに書き込まずスキップ
+                    print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy} → 次の商品へ")
+                    continue  # スプレッドシートに書き込まず、次の商品を試す
             else:
                 print(f"\n[5/5] Skipping profit calculation (no source found)")
 
@@ -2018,7 +2020,7 @@ def main():
 
             row_num = write_result_to_spreadsheet(sheets_client, result_data)
             total_processed += 1
-            items_processed_this_keyword += 1  # このキーワードで処理した件数
+            items_output_this_keyword += 1  # このキーワードで処理した件数
 
             if profit_no_rebate > 0 and not error_reason:
                 total_profitable += 1

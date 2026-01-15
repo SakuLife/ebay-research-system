@@ -285,6 +285,68 @@ BRAND_MAPPINGS = {
     'tomix': 'トミックス',
 }
 
+# キャラクター名/固有名詞マッピング（英語 ↔ カタカナ）
+# pykakasiでカタカナ→ローマ字変換後に照合するため、ローマ字表記も含む
+CHARACTER_NAME_MAPPINGS = {
+    # Disney / Pixar
+    'nick wilde': ['ニック・ワイルド', 'ニックワイルド', 'nikku wairudo', 'nikkuwairudo'],
+    'judy hopps': ['ジュディ・ホップス', 'ジュディホップス', 'judi hoppusu'],
+    'zootopia': ['ズートピア', 'zuutopia'],
+    'mickey mouse': ['ミッキーマウス', 'ミッキー', 'mikkii mausu', 'mikkii'],
+    'minnie mouse': ['ミニーマウス', 'ミニー', 'minii mausu', 'minii'],
+    'donald duck': ['ドナルドダック', 'ドナルド', 'donarudo dakku'],
+    'winnie the pooh': ['くまのプーさん', 'プーさん', 'puusan'],
+    'stitch': ['スティッチ', 'suticchi'],
+    'tsum tsum': ['ツムツム', 'tsumutsuму', 'tsumutsumu'],
+    'duffy': ['ダッフィー', 'daffii'],
+    'shelliemay': ['シェリーメイ', 'sheriimei'],
+    'gelatoni': ['ジェラトーニ', 'jeratooni'],
+    'stellalou': ['ステラルー', 'suteraruu'],
+    # Doraemon
+    'doraemon': ['ドラえもん', 'doraemon'],
+    'nobita': ['のび太', 'nobita'],
+    # Pokemon
+    'pikachu': ['ピカチュウ', 'pikachuu'],
+    'pokemon': ['ポケモン', 'ポケットモンスター', 'pokemon', 'poketto monsutaa'],
+    'charizard': ['リザードン', 'rizaadon'],
+    'mewtwo': ['ミュウツー', 'myuutsuu'],
+    # Sanrio
+    'hello kitty': ['ハローキティ', 'キティ', 'haroo kiti', 'kiti'],
+    'my melody': ['マイメロディ', 'マイメロ', 'mai merodi'],
+    'cinnamoroll': ['シナモロール', 'shinamorooru'],
+    'kuromi': ['クロミ', 'kuromi'],
+    # Anime / Games
+    'gundam': ['ガンダム', 'gandamu'],
+    'evangelion': ['エヴァンゲリオン', 'エヴァ', 'evangerion', 'eva'],
+    'one piece': ['ワンピース', 'wanpiisu'],
+    'naruto': ['ナルト', 'naruto'],
+    'dragon ball': ['ドラゴンボール', 'doragon booru'],
+    'goku': ['悟空', 'ゴクウ', 'gokuu'],
+    'demon slayer': ['鬼滅の刃', 'きめつのやいば', 'kimetsu no yaiba'],
+    'jujutsu kaisen': ['呪術廻戦', 'jujutsu kaisen'],
+    'attack on titan': ['進撃の巨人', 'shingeki no kyojin'],
+    'studio ghibli': ['スタジオジブリ', 'ジブリ', 'sutajio jiburi', 'jiburi'],
+    'totoro': ['トトロ', 'totoro'],
+    'spirited away': ['千と千尋の神隠し', 'sen to chihiro'],
+    # Plush / Toy terms
+    'plush': ['ぬいぐるみ', 'nuigurumi'],
+    'plushie': ['ぬいぐるみ', 'nuigurumi'],
+    'costume': ['コスチューム', 'kosuchuumu', '衣装'],
+    'set': ['セット', 'setto'],
+}
+
+# カテゴリ別の除外キーワード（商品種類の不一致を防ぐ）
+CATEGORY_EXCLUSION_KEYWORDS = {
+    # Plush/ぬいぐるみカテゴリの場合、以下のキーワードを含む商品は除外
+    'plush': ['編みぐるみ', 'あみぐるみ', 'amigurumi', '本', '雑誌', '全国版',
+              'コレクション全', 'デアゴスティーニ', 'deagostini', 'magazine',
+              'book', 'キット', 'kit', '手作り', '作り方', 'pattern'],
+    # フィギュアカテゴリ
+    'figure': ['本', '雑誌', 'book', 'magazine', 'カタログ', 'catalog'],
+    # カードカテゴリ
+    'card': ['スリーブ', 'sleeve', 'デッキケース', 'deck box', 'バインダー', 'binder'],
+}
+
 
 def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
     """
@@ -334,7 +396,28 @@ def calculate_title_similarity(ebay_title: str, source_title: str) -> float:
             bonus += 0.2
             break
 
-    # 4. ローマ字に統一して単語比較
+    # 4. キャラクター名/固有名詞一致チェック（英語 ↔ カタカナ）
+    # 例: "Nick Wilde" in eBay ↔ "ニック・ワイルド" in source
+    source_romaji = normalize_to_romaji(source_title)
+    character_matches = 0
+    for eng_name, jp_variants in CHARACTER_NAME_MAPPINGS.items():
+        # eBayタイトルに英語名が含まれているか
+        if eng_name in ebay_lower:
+            # 仕入先タイトルに日本語バリエーションまたはローマ字が含まれているか
+            for variant in jp_variants:
+                if variant in source_title or variant.lower() in source_romaji:
+                    character_matches += 1
+                    break
+        # 逆パターン: 仕入先に英語名が含まれている場合
+        elif eng_name in source_lower:
+            for variant in jp_variants:
+                if variant in ebay_title:
+                    character_matches += 1
+                    break
+    if character_matches > 0:
+        bonus += 0.3 * min(character_matches, 3)  # 最大+0.9
+
+    # 5. ローマ字に統一して単語比較
     def normalize_to_words(text: str) -> set:
         romaji_text = normalize_to_romaji(text)
         words = re.findall(r'[a-z0-9]+', romaji_text)
@@ -620,6 +703,43 @@ def calculate_source_priority(source_site: str) -> float:
     return 0.7  # 不明なサイトは中間
 
 
+def check_category_exclusion(source_title: str, category_name: str) -> tuple[bool, str]:
+    """
+    カテゴリベースの除外チェックを行う.
+    eBayカテゴリと仕入先商品の種類が一致しない場合に除外.
+
+    例: eBayが「Plush Toys」なのに、仕入先が「編みぐるみキット」や「本」の場合は除外
+
+    Args:
+        source_title: 仕入先の商品タイトル
+        category_name: eBayのカテゴリ名
+
+    Returns:
+        (should_exclude: bool, reason: str)
+    """
+    if not category_name:
+        return False, ""
+
+    source_lower = source_title.lower()
+    category_lower = category_name.lower()
+
+    # カテゴリ名からキーを判定
+    category_key = None
+    if 'plush' in category_lower or 'ぬいぐるみ' in category_name:
+        category_key = 'plush'
+    elif 'figure' in category_lower or 'フィギュア' in category_name:
+        category_key = 'figure'
+    elif 'card' in category_lower or 'カード' in category_name:
+        category_key = 'card'
+
+    if category_key and category_key in CATEGORY_EXCLUSION_KEYWORDS:
+        for keyword in CATEGORY_EXCLUSION_KEYWORDS[category_key]:
+            if keyword.lower() in source_lower or keyword in source_title:
+                return True, f"カテゴリ不一致({category_key}≠{keyword})"
+
+    return False, ""
+
+
 @dataclass
 class RankedSource:
     """スコア付き仕入先."""
@@ -636,7 +756,8 @@ def find_top_matching_sources(
     min_similarity: float = 0.2,
     prefer_sourcing: bool = True,
     require_price: bool = True,
-    top_n: int = 3
+    top_n: int = 3,
+    category_name: str = ""
 ) -> List[RankedSource]:
     """
     eBayタイトルにマッチする仕入先をスコア順に最大N件返す.
@@ -649,6 +770,7 @@ def find_top_matching_sources(
         prefer_sourcing: 仕入れ可能サイトを優先するか
         require_price: 価格が必須かどうか（Trueなら価格0円は除外）
         top_n: 返す件数（デフォルト3）
+        category_name: eBayのカテゴリ名（カテゴリベース除外に使用）
 
     Returns:
         RankedSourceのリスト（スコア降順）
@@ -658,6 +780,7 @@ def find_top_matching_sources(
 
     ranked_sources: List[RankedSource] = []
     excluded_urls = 0
+    category_excluded = 0
     seen_urls = set()  # 重複URL除外用
 
     MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
@@ -672,6 +795,12 @@ def find_top_matching_sources(
         if source.source_url in seen_urls:
             continue
         seen_urls.add(source.source_url)
+
+        # カテゴリベースの除外チェック（Plushなのに本/雑誌など）
+        should_exclude, reason = check_category_exclusion(source.title, category_name)
+        if should_exclude:
+            category_excluded += 1
+            continue
 
         # 価格0円の処理
         # 大手ECサイトは価格0でも候補に含める（後で手動確認）
@@ -701,8 +830,13 @@ def find_top_matching_sources(
             priority=priority
         ))
 
-    if excluded_urls > 0:
-        print(f"    (海外/PDF除外: {excluded_urls}件)")
+    if excluded_urls > 0 or category_excluded > 0:
+        parts = []
+        if excluded_urls > 0:
+            parts.append(f"海外/PDF除外: {excluded_urls}件")
+        if category_excluded > 0:
+            parts.append(f"カテゴリ除外: {category_excluded}件")
+        print(f"    ({', '.join(parts)})")
 
     # スコア降順でソートして上位N件を返す
     ranked_sources.sort(key=lambda x: x.score, reverse=True)
@@ -1148,7 +1282,22 @@ def main():
                     # 画像検索でも類似度チェック（誤爆防止、ただし閾値は低め）
                     # 画像一致でも全く関係ない商品の場合があるため
                     MIN_IMAGE_SIMILARITY = 0.15  # 画像検索は閾値を低めに
-                    valid_sources = [(src, sim, total) for src, sim, _, _, total in scored_sources if sim >= MIN_IMAGE_SIMILARITY]
+
+                    # カテゴリベースの除外チェックも適用
+                    valid_sources = []
+                    category_excluded_count = 0
+                    for src, sim, _, _, total in scored_sources:
+                        if sim < MIN_IMAGE_SIMILARITY:
+                            continue
+                        # カテゴリ除外チェック（Plushなのに本/雑誌など）
+                        should_exclude, _ = check_category_exclusion(src.title, category_name)
+                        if should_exclude:
+                            category_excluded_count += 1
+                            continue
+                        valid_sources.append((src, sim, total))
+
+                    if category_excluded_count > 0:
+                        print(f"    (カテゴリ除外: {category_excluded_count}件)")
 
                     if valid_sources:
                         # スコア順にソートして上位3件を取得
@@ -1281,7 +1430,7 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3)
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name)
                     if top_sources:
                         best_source = top_sources[0].source
                         search_method = "英語検索"
@@ -1418,7 +1567,7 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3)
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name)
                     if top_sources:
                         best_source = top_sources[0].source
                         search_method = "日本語検索"

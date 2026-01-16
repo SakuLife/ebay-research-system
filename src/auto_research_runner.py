@@ -1172,6 +1172,37 @@ def get_processed_ebay_ids(sheet_client) -> set:
         return set()
 
 
+def update_sheet_headers(sheet_client) -> bool:
+    """
+    入力シートのヘッダー行（1行目）を最新の列構成に更新する.
+
+    Returns:
+        更新成功ならTrue
+    """
+    try:
+        worksheet = sheet_client.spreadsheet.worksheet("入力シート")
+
+        # 現在のヘッダーを取得
+        current_headers = worksheet.row_values(1)
+        expected_headers = INPUT_SHEET_COLUMNS
+
+        # ヘッダーが一致しているかチェック
+        if current_headers == expected_headers:
+            print(f"  [INFO] Headers are up to date ({len(expected_headers)} columns)")
+            return True
+
+        # ヘッダーを更新
+        cell_range = f"A1:X1"  # 24列
+        worksheet.update(range_name=cell_range, values=[expected_headers])
+        print(f"  [INFO] Headers updated: {len(current_headers)} → {len(expected_headers)} columns")
+        print(f"  [INFO] New columns: 新品中古(E), 出品フラグ(W)")
+        return True
+
+    except Exception as e:
+        print(f"  [WARN] Failed to update headers: {e}")
+        return False
+
+
 def get_next_empty_row(sheet_client) -> int:
     """Get the next empty row number in the input sheet."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
@@ -1289,6 +1320,10 @@ def main():
 
     # Initialize search base client for profit calculation
     search_base_client = SearchBaseClient(sheets_client)
+
+    # Update headers if needed
+    print(f"\n[0/6] Checking spreadsheet headers...")
+    update_sheet_headers(sheets_client)
 
     # Step 1: Read settings and keywords from '設定＆キーワード' sheet
     print(f"\n[1/6] Reading settings from '設定＆キーワード' sheet...")
@@ -2155,6 +2190,7 @@ def main():
                 "profit_margin_with_rebate": profit_margin_with_rebate,
                 "category_name": category_name,
                 "category_id": category_id,
+                "condition": condition,  # 新品中古（New/Used）
                 "error": error_reason  # エラー理由（None or 文字列）
             }
 

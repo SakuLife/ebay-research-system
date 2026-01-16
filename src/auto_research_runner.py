@@ -39,9 +39,10 @@ def try_scrape_zero_price_items(sources: list, max_scrape: int = 5) -> int:
 
     大手ECサイト（Amazon/楽天/Yahoo）の0円アイテムに対してのみ実行.
     検索結果取得直後に呼び出すことで、より多くの有効な候補を得る.
+    在庫ステータスも取得して保存する.
 
     Args:
-        sources: SourceOfferのリスト（価格が更新される）
+        sources: SourceOfferのリスト（価格と在庫状態が更新される）
         max_scrape: 最大スクレイピング件数（API負荷軽減）
 
     Returns:
@@ -68,12 +69,19 @@ def try_scrape_zero_price_items(sources: list, max_scrape: int = 5) -> int:
         print(f"    [Scrape] {source.source_site}: 価格0円 → スクレイピング中...")
 
         scraped = scrape_price_for_url(source.source_url)
+
+        # 在庫ステータスを更新
+        source.in_stock = scraped.in_stock
+        source.stock_status = scraped.stock_status
+
         if scraped.success and scraped.price > 0:
             source.source_price_jpy = scraped.price
-            print(f"             → JPY {scraped.price:,.0f} (成功)")
+            stock_msg = " (在庫切れ)" if not scraped.in_stock else ""
+            print(f"             → JPY {scraped.price:,.0f}{stock_msg} (成功)")
             scraped_count += 1
         else:
-            print(f"             → 失敗: {scraped.error_message[:30]}")
+            error_msg = "在庫切れ" if not scraped.in_stock else scraped.error_message[:30]
+            print(f"             → 失敗: {error_msg}")
 
     return scraped_count
 
@@ -1937,16 +1945,23 @@ def main():
                     src = ranked_src.source
                     src_price = src.source_price_jpy + src.source_shipping_jpy
 
-                    # 価格0の場合はスクレイピング
+                    # 価格0の場合はスクレイピング（在庫ステータスも取得）
                     if src_price <= 0:
                         print(f"    [{rank}位] {src.source_site} - 価格0円、スクレイピング中...")
                         scraped = scrape_price_for_url(src.source_url)
+
+                        # 在庫ステータスを更新
+                        src.in_stock = scraped.in_stock
+                        src.stock_status = scraped.stock_status
+
                         if scraped.success and scraped.price > 0:
                             src.source_price_jpy = scraped.price
                             src_price = scraped.price
-                            print(f"         → JPY {scraped.price:,.0f} (scraped)")
+                            stock_msg = " (在庫切れ)" if not scraped.in_stock else ""
+                            print(f"         → JPY {scraped.price:,.0f}{stock_msg} (scraped)")
                         else:
-                            print(f"         → 取得失敗: {scraped.error_message}")
+                            error_msg = "在庫切れ" if not scraped.in_stock else scraped.error_message
+                            print(f"         → 取得失敗: {error_msg}")
 
                     # 仕入先タイトルから数量を抽出
                     source_quantity = extract_quantity_from_title(src.title, is_japanese=True)
@@ -1958,8 +1973,15 @@ def main():
                     else:
                         src_qty_str = "単品"
 
+                    # 在庫ステータス
+                    stock_str = ""
+                    if not src.in_stock:
+                        stock_str = " [在庫切れ]"
+                    elif src.stock_status == "unknown":
+                        stock_str = " [在庫不明]"
+
                     price_str = f"JPY {src_price:,.0f}" if src_price > 0 else "価格不明"
-                    print(f"    [{rank}位] {src.source_site} - {price_str}")
+                    print(f"    [{rank}位] {src.source_site} - {price_str}{stock_str}")
                     print(f"         数量: {src_qty_str} (マッチ度: {qty_match_score:.0%})")
                     print(f"         タイトル: {src.title[:45]}...")
 
@@ -1989,13 +2011,16 @@ def main():
                         "adjusted_price": adjusted_price,  # 調整後価格
                         "price_note": price_note,
                         "qty_match": qty_match_score,
-                        "source_qty": source_quantity
+                        "source_qty": source_quantity,
+                        "in_stock": src.in_stock,  # 在庫あり
+                        "stock_status": src.stock_status  # 在庫ステータス
                     })
 
                 # === 候補の選別とランキング ===
                 # 1. 数量不一致（0.0）は除外
-                # 2. 価格ありを優先（0円は後回し）
-                # 3. 数量マッチ度×スコアでランキング
+                # 2. 在庫ありを優先（在庫切れは後回し）
+                # 3. 価格ありを優先（0円は後回し）
+                # 4. 数量マッチ度×スコアでランキング
 
                 valid_candidates = [c for c in candidates_with_qty if c["qty_match"] > 0.0]
 
@@ -2007,9 +2032,25 @@ def main():
                     error_reason = "数量不一致"
                     best_source = None
                 else:
+                    # 在庫ありと在庫切れで分離
+                    in_stock_candidates = [c for c in valid_candidates if c["in_stock"]]
+                    out_of_stock_candidates = [c for c in valid_candidates if not c["in_stock"]]
+
+                    if out_of_stock_candidates:
+                        print(f"\n  [INFO] 在庫切れ{len(out_of_stock_candidates)}件を後回し:")
+                        for c in out_of_stock_candidates:
+                            print(f"         - {c['ranked_src'].source.source_site}: {c['ranked_src'].source.title[:30]}...")
+
+                    # 在庫ありを優先、なければ在庫切れを使用
+                    if in_stock_candidates:
+                        working_pool = in_stock_candidates
+                    else:
+                        print(f"\n  [WARN] 全候補が在庫切れ！最も有望な候補を使用")
+                        working_pool = out_of_stock_candidates
+
                     # 価格ありと価格なしで分離
-                    priced_candidates = [c for c in valid_candidates if c["adjusted_price"] > 0]
-                    unpriced_candidates = [c for c in valid_candidates if c["adjusted_price"] <= 0]
+                    priced_candidates = [c for c in working_pool if c["adjusted_price"] > 0]
+                    unpriced_candidates = [c for c in working_pool if c["adjusted_price"] <= 0]
 
                     # 価格ありを優先、なければ価格なしを使用
                     if priced_candidates:

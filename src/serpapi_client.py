@@ -164,6 +164,39 @@ class SerpApiClient:
         "google.com",       # Googleリダイレクト
     ]
 
+    # 購入不可サイト（商品紹介のみ、通販機能なし）
+    NON_PURCHASABLE_DOMAINS = [
+        "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
+        "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）
+        "goodsmile.info",        # グッドスマイルカンパニー公式（直販なし）
+        "megahobby.jp",          # メガハウス公式（直販なし）
+        "bandai-hobby.net",      # バンダイホビー公式（直販なし）
+        "tamashii.jp",           # 魂ウェブ（予約のみ、即購入不可が多い）
+        "hobbystock.jp",         # ホビーストック（情報サイト）
+        "amiami.jp",             # あみあみ公式（.comは通販OK、.jpは情報）
+        "figure.fm",             # フィギュア情報サイト
+        "myfigurecollection.net", # コレクション管理サイト
+        "hlj.com",               # ホビーリンクジャパン海外向け（日本発送不可）
+        "play-asia.com",         # プレイアジア海外向け
+        "nin-nin-game.com",      # 海外向け（日本発送不可）
+        "wikipedia.org",         # 百科事典
+        "wikia.com",             # ファンサイト
+        "fandom.com",            # ファンサイト
+        "youtube.com",           # 動画サイト
+        "twitter.com",           # SNS
+        "x.com",                 # SNS
+        "instagram.com",         # SNS
+        "facebook.com",          # SNS
+        "pinterest.com",         # 画像SNS
+        "reddit.com",            # 掲示板
+        "blog.",                 # 一般ブログ
+        "ameblo.jp",             # アメブロ
+        "fc2.com",               # FC2
+        "livedoor.",             # ライブドア
+        "hatena.",               # はてな
+        "note.com",              # note
+    ]
+
     def __init__(self, api_key: Optional[str] = None):
         """
         Args:
@@ -573,9 +606,15 @@ class SerpApiClient:
                     if extracted and "google.com" not in extracted and "google.co.jp" not in extracted:
                         if extracted.startswith("http"):
                             return extracted
-                        # httpで始まらない場合、https://を付与
-                        if "." in extracted and "/" in extracted:
-                            return "https://" + extracted
+                        # httpで始まらない場合、ドメイン形式のみhttps://を付与
+                        # 例: amazon.co.jp/item → OK
+                        # 例: Figure 1/7 ver. → NG (検索クエリを誤って変換しない)
+                        # ドメインパターン: xxx.xxx/... 形式かつ空白を含まない
+                        if "." in extracted and "/" in extracted and " " not in extracted:
+                            # 先頭がドメイン形式（英数字.英数字）であることを確認
+                            domain_pattern = re.match(r'^[a-zA-Z0-9][\w.-]*\.[a-zA-Z]{2,}', extracted)
+                            if domain_pattern:
+                                return "https://" + extracted
 
             # パスにURLが埋め込まれているパターン
             # 例: /url/https://shop.com/item
@@ -828,6 +867,10 @@ class SerpApiClient:
 
         # 常に除外するサイト（eBay自体、Googleリダイレクト等）
         if any(domain in url_lower for domain in self.EXCLUDED_DOMAINS):
+            return True
+
+        # 購入不可サイト（商品紹介のみ、通販機能なし）を除外
+        if any(domain in url_lower for domain in self.NON_PURCHASABLE_DOMAINS):
             return True
 
         # New条件の場合、フリマ・中古系を除外

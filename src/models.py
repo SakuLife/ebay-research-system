@@ -28,6 +28,8 @@ class SourceOffer:
     source_shipping_jpy: float
     stock_hint: str
     title: str = ""
+    in_stock: bool = True  # 在庫あり（デフォルト）
+    stock_status: str = "unknown"  # "in_stock", "out_of_stock", "unknown"
 
 
 @dataclass

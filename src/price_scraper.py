@@ -16,6 +16,8 @@ class ScrapedPrice:
     source: str = ""
     success: bool = False
     error_message: str = ""
+    in_stock: bool = True  # 在庫あり（デフォルト）
+    stock_status: str = ""  # "in_stock", "out_of_stock", "unknown"
 
 
 class PriceScraper:
@@ -107,10 +109,22 @@ class PriceScraper:
                 html = response.text
 
                 price = self._extract_rakuten_price(html)
+                in_stock, stock_status = self._check_rakuten_stock(html)
 
                 if price > 0:
-                    print(f"    [Scrape] Rakuten price found: JPY {price:,.0f}")
-                    return ScrapedPrice(price=price, currency="JPY", source="楽天", success=True)
+                    stock_msg = " (在庫切れ)" if not in_stock else ""
+                    print(f"    [Scrape] Rakuten price found: JPY {price:,.0f}{stock_msg}")
+                    return ScrapedPrice(
+                        price=price, currency="JPY", source="楽天",
+                        success=True, in_stock=in_stock, stock_status=stock_status
+                    )
+
+                # 在庫切れで価格が見つからない場合
+                if not in_stock:
+                    return ScrapedPrice(
+                        price=0, success=False, error_message="Out of stock",
+                        in_stock=False, stock_status="out_of_stock"
+                    )
 
                 # 価格が見つからない場合、リトライ
                 if attempt < max_retries - 1:
@@ -262,6 +276,56 @@ class PriceScraper:
         # 頻度が同じなら最小価格を返す
         return min(valid_prices)
 
+    def _check_rakuten_stock(self, html: str) -> tuple:
+        """
+        楽天HTMLから在庫状況を判定する.
+
+        Returns:
+            (in_stock: bool, stock_status: str)
+        """
+        html_lower = html.lower()
+
+        # 在庫切れ/売り切れを示すパターン
+        out_of_stock_patterns = [
+            "在庫切れ",
+            "売り切れ",
+            "sold out",
+            "品切れ",
+            "完売",
+            "入荷待ち",
+            "再入荷待ち",
+            "予約受付終了",
+            "販売終了",
+            "取扱終了",
+            "お取り扱いできません",
+            '"availability"\\s*:\\s*"outofstock"',
+            '"availability"\\s*:\\s*"https://schema.org/outofstock"',
+            'class="[^"]*sold-?out[^"]*"',
+            'class="[^"]*out-?of-?stock[^"]*"',
+        ]
+
+        for pattern in out_of_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (False, "out_of_stock")
+
+        # 在庫ありを示すパターン（確認用）
+        in_stock_patterns = [
+            "在庫あり",
+            "在庫わずか",
+            "残りわずか",
+            "カートに入れる",
+            "今すぐ買う",
+            '"availability"\\s*:\\s*"instock"',
+            '"availability"\\s*:\\s*"https://schema.org/instock"',
+        ]
+
+        for pattern in in_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (True, "in_stock")
+
+        # 判定不能の場合はデフォルトで在庫ありとする
+        return (True, "unknown")
+
     def _scrape_amazon(self, url: str) -> ScrapedPrice:
         """
         Amazon.co.jpの商品ページから価格を取得する.
@@ -289,11 +353,26 @@ class PriceScraper:
                 response.raise_for_status()
                 html = response.text
 
+                # 重要: 在庫状況を先にチェック
+                # 在庫切れの場合、ページ内の関連商品等の価格を誤って取得しないようにする
+                in_stock, stock_status = self._check_amazon_stock(html)
+
+                # 在庫切れの場合は即座に返す（価格抽出をスキップ）
+                if not in_stock:
+                    print(f"    [Scrape] Amazon: 在庫切れ検出 → 価格取得スキップ")
+                    return ScrapedPrice(
+                        price=0, success=False, error_message="Out of stock",
+                        in_stock=False, stock_status="out_of_stock"
+                    )
+
                 price = self._extract_amazon_price(html)
 
                 if price > 0:
                     print(f"    [Scrape] Amazon price found: JPY {price:,.0f}")
-                    return ScrapedPrice(price=price, currency="JPY", source="Amazon", success=True)
+                    return ScrapedPrice(
+                        price=price, currency="JPY", source="Amazon",
+                        success=True, in_stock=in_stock, stock_status=stock_status
+                    )
 
                 # 価格が見つからない場合、リトライ
                 if attempt < max_retries - 1:
@@ -356,6 +435,51 @@ class PriceScraper:
 
         return 0
 
+    def _check_amazon_stock(self, html: str) -> tuple:
+        """
+        AmazonのHTMLから在庫状況を判定する.
+
+        Returns:
+            (in_stock: bool, stock_status: str)
+        """
+        # Amazonの在庫切れパターン
+        out_of_stock_patterns = [
+            "現在在庫切れです",
+            "この商品の再入荷予定は立っておりません",
+            "入荷時期は未定です",
+            "現在お取り扱いできません",
+            "この商品は現在お取り扱いできません",
+            "一時的に在庫切れ",
+            "在庫切れ",
+            "Out of Stock",
+            "Currently unavailable",
+            "id=\"outOfStock\"",
+            'id="availability"[^>]*>\s*(?:<[^>]*>)*\s*(?:現在在庫切れ|在庫切れ)',
+            '"availability"\\s*:\\s*"https://schema.org/OutOfStock"',
+        ]
+
+        for pattern in out_of_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (False, "out_of_stock")
+
+        # 在庫ありパターン
+        in_stock_patterns = [
+            "在庫あり",
+            "残り\\d+点",
+            "カートに入れる",
+            "今すぐ買う",
+            "id=\"add-to-cart-button\"",
+            "id=\"buy-now-button\"",
+            '"availability"\\s*:\\s*"https://schema.org/InStock"',
+        ]
+
+        for pattern in in_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (True, "in_stock")
+
+        # 判定不能
+        return (True, "unknown")
+
     def _scrape_yahoo(self, url: str) -> ScrapedPrice:
         """
         Yahoo!ショッピングの商品ページから価格を取得する.
@@ -367,12 +491,24 @@ class PriceScraper:
             html = response.text
 
             price = self._extract_yahoo_price(html)
+            in_stock, stock_status = self._check_yahoo_stock(html)
 
             if price > 0:
-                print(f"    [Scrape] Yahoo price found: JPY {price:,.0f}")
-                return ScrapedPrice(price=price, currency="JPY", source="Yahoo", success=True)
-            else:
-                return ScrapedPrice(price=0, success=False, error_message="Price not found")
+                stock_msg = " (在庫切れ)" if not in_stock else ""
+                print(f"    [Scrape] Yahoo price found: JPY {price:,.0f}{stock_msg}")
+                return ScrapedPrice(
+                    price=price, currency="JPY", source="Yahoo",
+                    success=True, in_stock=in_stock, stock_status=stock_status
+                )
+
+            # 在庫切れで価格が見つからない場合
+            if not in_stock:
+                return ScrapedPrice(
+                    price=0, success=False, error_message="Out of stock",
+                    in_stock=False, stock_status="out_of_stock"
+                )
+
+            return ScrapedPrice(price=0, success=False, error_message="Price not found")
 
         except requests.exceptions.RequestException as e:
             return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
@@ -422,6 +558,45 @@ class PriceScraper:
             return min(valid_prices)
 
         return 0
+
+    def _check_yahoo_stock(self, html: str) -> tuple:
+        """
+        Yahoo!ショッピングのHTMLから在庫状況を判定する.
+
+        Returns:
+            (in_stock: bool, stock_status: str)
+        """
+        # 在庫切れパターン
+        out_of_stock_patterns = [
+            "在庫切れ",
+            "売り切れ",
+            "品切れ",
+            "sold out",
+            "入荷待ち",
+            "販売終了",
+            "取り扱いを終了",
+            "お取り扱いしておりません",
+            '"availability"\\s*:\\s*"OutOfStock"',
+        ]
+
+        for pattern in out_of_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (False, "out_of_stock")
+
+        # 在庫ありパターン
+        in_stock_patterns = [
+            "在庫あり",
+            "カートに入れる",
+            "今すぐ買う",
+            '"availability"\\s*:\\s*"InStock"',
+        ]
+
+        for pattern in in_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (True, "in_stock")
+
+        # 判定不能
+        return (True, "unknown")
 
 
 # シングルトンインスタンス

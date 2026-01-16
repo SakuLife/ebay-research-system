@@ -33,6 +33,68 @@ MAJOR_EC_DOMAINS_FOR_SCRAPING = [
 ]
 
 
+def unwrap_google_redirect_url(url: str) -> str:
+    """
+    google.com のリダイレクトURLから実際のURLを抽出する.
+
+    例:
+    - https://www.google.com/url?q=https://store.shopping.yahoo.co.jp/...
+    - https://www.google.co.jp/url?url=https://item.rakuten.co.jp/...
+
+    Args:
+        url: google.comのリダイレクトURL
+
+    Returns:
+        実際のURL。抽出できない場合は元のURLをそのまま返す
+    """
+    if not url:
+        return url
+
+    # google.com/google.co.jp 以外は処理不要
+    if "google.com" not in url and "google.co.jp" not in url:
+        return url
+
+    try:
+        from urllib.parse import urlparse, parse_qs, unquote
+
+        # URLを複数回デコード（二重エンコード対策）
+        decoded_url = url
+        for _ in range(3):
+            new_decoded = unquote(decoded_url)
+            if new_decoded == decoded_url:
+                break
+            decoded_url = new_decoded
+
+        parsed = urlparse(decoded_url)
+        query_params = parse_qs(parsed.query)
+
+        # よくあるリダイレクトパラメータ
+        redirect_params = ["url", "q", "u", "adurl", "dest", "redirect", "landing"]
+        for param in redirect_params:
+            if param in query_params:
+                extracted = query_params[param][0]
+                # 複数回デコード
+                for _ in range(3):
+                    new_extracted = unquote(extracted)
+                    if new_extracted == extracted:
+                        break
+                    extracted = new_extracted
+
+                # google.comでない実際のURLの場合は返す
+                if extracted and "google.com" not in extracted and "google.co.jp" not in extracted:
+                    if extracted.startswith("http"):
+                        return extracted
+                    # ドメイン形式のみhttps://を付与
+                    if "." in extracted and "/" in extracted and " " not in extracted:
+                        domain_pattern = re.match(r'^[a-zA-Z0-9][\w.-]*\.[a-zA-Z]{2,}', extracted)
+                        if domain_pattern:
+                            return "https://" + extracted
+
+        return url  # 抽出できない場合は元のURL
+    except Exception:
+        return url
+
+
 def try_scrape_zero_price_items(sources: list, max_scrape: int = 5) -> int:
     """
     価格0円のアイテムに対してスクレイピングを試みる.
@@ -363,6 +425,117 @@ def extract_model_numbers(text: str) -> set:
         model_numbers.update(matches)
 
     return model_numbers
+
+
+# カード番号パターン（Weiss Schwarz, Lorcana, Pokemon等）
+CARD_ID_PATTERNS = [
+    # Weiss Schwarz: DD/W84-001, Dds/S104-029SSP, GBS/S63-024SP など
+    r'([A-Z]{2,4}/[A-Z]?\d{2,4}-\d{2,4}[A-Z]{0,4})',
+    # シンプルなカード番号: S104-029, W84-001 など
+    r'\b([A-Z]\d{2,4}-\d{2,4}[A-Z]{0,4})\b',
+    # Lorcana / Pokemon: 242/204, 001/165 など
+    r'\b(\d{1,3}/\d{1,3})\b',
+    # レアリティ単独: SSP, SP, SR, RR, R など（後で補助的に使用）
+    r'\b(SSP|SP|SR|RR|SEC|HR|UR|PR)\b',
+]
+
+
+def extract_card_identifiers(text: str) -> set:
+    """
+    テキストからカード番号/識別子を抽出する.
+
+    対応フォーマット:
+    - Weiss Schwarz: DD/W84-001, Dds/S104-029SSP
+    - Lorcana/Pokemon: 242/204, 001/165
+    - レアリティ: SSP, SP, SR, RR
+
+    Args:
+        text: 商品タイトル
+
+    Returns:
+        抽出された識別子のセット
+    """
+    if not text:
+        return set()
+
+    identifiers = set()
+    text_upper = text.upper()
+
+    for pattern in CARD_ID_PATTERNS:
+        matches = re.findall(pattern, text_upper)
+        identifiers.update(matches)
+
+    return identifiers
+
+
+def check_product_identifier_match(ebay_title: str, source_title: str) -> tuple:
+    """
+    eBayタイトルの商品識別子（カード番号/型番）が仕入先にあるかチェック.
+
+    カード番号や型番がeBayタイトルにある場合、仕入先にも同じ番号がなければ
+    別商品と判断する.
+
+    例:
+    - eBay: "Weiss Schwarz Dds/S104-029SSP" → 識別子: "DDS/S104-029SSP"
+    - Source: "Weiss Schwarz S104-029" → 部分一致 → OK
+    - Source: "Weiss Schwarz S104-030" → 不一致 → NG
+
+    Args:
+        ebay_title: eBayタイトル
+        source_title: 仕入先タイトル
+
+    Returns:
+        (is_match, missing_ids):
+        - is_match: True=一致または識別子なし, False=不一致
+        - missing_ids: 見つからなかった識別子のリスト
+    """
+    ebay_ids = extract_card_identifiers(ebay_title)
+
+    if not ebay_ids:
+        # カード番号/型番がない場合は問題なし
+        return (True, [])
+
+    source_ids = extract_card_identifiers(source_title)
+    source_upper = source_title.upper()
+
+    missing_ids = []
+
+    for ebay_id in ebay_ids:
+        # レアリティ単独（SSP, SR等）はスキップ（補助情報のため）
+        if ebay_id in {'SSP', 'SP', 'SR', 'RR', 'SEC', 'HR', 'UR', 'PR'}:
+            continue
+
+        found = False
+
+        # 完全一致チェック
+        if ebay_id in source_ids:
+            found = True
+        else:
+            # 部分一致チェック（S104-029 in DDS/S104-029SSP）
+            # 番号部分を抽出して比較
+            # 例: DDS/S104-029SSP → S104-029 部分で比較
+            ebay_core = re.sub(r'^[A-Z]{2,4}/', '', ebay_id)  # プレフィックス除去
+            ebay_core = re.sub(r'[A-Z]{2,4}$', '', ebay_core)  # サフィックス除去
+
+            for source_id in source_ids:
+                source_core = re.sub(r'^[A-Z]{2,4}/', '', source_id)
+                source_core = re.sub(r'[A-Z]{2,4}$', '', source_core)
+
+                if ebay_core and source_core and ebay_core == source_core:
+                    found = True
+                    break
+
+            # ソースタイトル全体にも番号が含まれているかチェック
+            if not found and ebay_core:
+                if ebay_core in source_upper:
+                    found = True
+
+        if not found:
+            missing_ids.append(ebay_id)
+
+    # 1つでも必須の識別子が見つからない場合は不一致
+    is_match = len(missing_ids) == 0
+    return (is_match, missing_ids)
 
 
 # pykakasi for Japanese to romaji conversion (handles kanji, hiragana, katakana)
@@ -798,6 +971,20 @@ EXCLUDED_URL_PATTERNS = [
     "/item/?",        # Bandai一覧ページ
     "/products?",     # 商品一覧
     "/category/",     # カテゴリページ
+    "/product-group/",  # Merdisney一覧ページ
+    "/character/",    # Disney Store キャラクターページ
+    "?prefn",         # Disney Store フィルター
+    "?prefv",         # Disney Store フィルター
+    # ブログ・まとめサイト（仕入れ不可）
+    "infotvlive.net",
+    "matome.naver.jp",
+    "togetter.com",
+    "note.com",
+    "ameblo.jp",
+    # 価格比較サイト（仕入れ不可）
+    "kakaku.com",
+    "price.com",
+    "bestgate.net",
 ]
 
 
@@ -1053,7 +1240,7 @@ def find_top_matching_sources(
     seen_urls = set()  # 重複URL除外用
 
     MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
-    ABSOLUTE_MIN_SIMILARITY = 0.05  # 絶対最低類似度（これ以下は完全除外）
+    ABSOLUTE_MIN_SIMILARITY = 0.45  # 絶対最低類似度（これ以下は完全除外）
 
     for source in sources:
         # 許可されていないURL（海外Amazon、PDF等）は除外
@@ -1109,6 +1296,14 @@ def find_top_matching_sources(
             # 例: "Tiffany"が欲しいのに"チャッキー"が出てきた場合
             key_match_bonus = 0.1  # 90%減点
             print(f"    [WARN] キー不一致: {', '.join(missing_keys)} が見つからない → {source.title[:40]}...")
+
+        # カード番号/型番の必須チェック（不一致は完全除外）
+        # 例: "S104-029SSP"がeBayにあるのにソースに"S104-030"しかない場合
+        product_id_match, missing_ids = check_product_identifier_match(ebay_title, source.title)
+        if not product_id_match:
+            # カード番号/型番が不一致の場合は完全に除外
+            print(f"    [SKIP] 識別子不一致: {', '.join(missing_ids)} → {source.title[:40]}...")
+            continue
 
         # 総合スコア = 類似度 × conditionスコア × 優先度 × 価格ボーナス × キー一致ボーナス
         total_score = similarity * condition_score * priority * price_bonus * key_match_bonus
@@ -1614,9 +1809,9 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    # 画像検索でも類似度チェック（誤爆防止、ただし閾値は低め）
+                    # 画像検索でも類似度チェック（誤爆防止）
                     # 画像一致でも全く関係ない商品の場合があるため
-                    MIN_IMAGE_SIMILARITY = 0.15  # 画像検索は閾値を低めに
+                    MIN_IMAGE_SIMILARITY = 0.25  # 画像検索の類似度閾値
 
                     # カテゴリベースの除外チェックも適用
                     valid_sources = []
@@ -1672,16 +1867,19 @@ def main():
                 condition_skipped = 0
                 MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
                 for shop_item in shopping_results:
+                    # google.comリダイレクトURLから実URLを抽出
+                    actual_link = unwrap_google_redirect_url(shop_item.link)
+
                     # google.comのURLはスキップ（実際の商品ページではない）
-                    if "google.com" in shop_item.link:
+                    if "google.com" in actual_link or "google.co.jp" in actual_link:
                         google_url_skipped += 1
                         continue
                     # New条件でフリマ系サイトを除外
-                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
+                    if not is_valid_source_for_condition(shop_item.source, actual_link, condition):
                         condition_skipped += 1
                         continue
 
-                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
+                    is_major_ec = any(domain in actual_link for domain in MAJOR_EC_DOMAINS)
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
                         if shop_item.currency == "USD":
@@ -1689,7 +1887,7 @@ def main():
 
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=encode_url_with_japanese(shop_item.link),
+                            source_url=encode_url_with_japanese(actual_link),
                             source_price_jpy=price_jpy,
                             source_shipping_jpy=0,
                             stock_hint="",
@@ -1699,7 +1897,7 @@ def main():
                         major_ec_no_price += 1
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=encode_url_with_japanese(shop_item.link),
+                            source_url=encode_url_with_japanese(actual_link),
                             source_price_jpy=0,
                             source_shipping_jpy=0,
                             stock_hint="要価格確認",
@@ -1811,16 +2009,19 @@ def main():
                 condition_skipped = 0
                 MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
                 for shop_item in shopping_results:
+                    # google.comリダイレクトURLから実URLを抽出
+                    actual_link = unwrap_google_redirect_url(shop_item.link)
+
                     # google.comのURLはスキップ（実際の商品ページではない）
-                    if "google.com" in shop_item.link:
+                    if "google.com" in actual_link or "google.co.jp" in actual_link:
                         google_url_skipped += 1
                         continue
                     # New条件でフリマ系サイトを除外
-                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
+                    if not is_valid_source_for_condition(shop_item.source, actual_link, condition):
                         condition_skipped += 1
                         continue
 
-                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
+                    is_major_ec = any(domain in actual_link for domain in MAJOR_EC_DOMAINS)
                     if shop_item.price > 0:
                         price_jpy = shop_item.price
                         if shop_item.currency == "USD":
@@ -1828,7 +2029,7 @@ def main():
 
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=encode_url_with_japanese(shop_item.link),
+                            source_url=encode_url_with_japanese(actual_link),
                             source_price_jpy=price_jpy,
                             source_shipping_jpy=0,
                             stock_hint="",
@@ -1838,7 +2039,7 @@ def main():
                         major_ec_no_price += 1
                         all_sources.append(SourceOffer(
                             source_site=shop_item.source,
-                            source_url=encode_url_with_japanese(shop_item.link),
+                            source_url=encode_url_with_japanese(actual_link),
                             source_price_jpy=0,
                             source_shipping_jpy=0,
                             stock_hint="要価格確認",
@@ -1945,9 +2146,14 @@ def main():
                     src = ranked_src.source
                     src_price = src.source_price_jpy + src.source_shipping_jpy
 
-                    # 価格0の場合はスクレイピング（在庫ステータスも取得）
-                    if src_price <= 0:
-                        print(f"    [{rank}位] {src.source_site} - 価格0円、スクレイピング中...")
+                    # 大手ECかどうか判定
+                    is_major_ec = any(domain in src.source_url for domain in ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"])
+
+                    # 価格0の場合、または非大手ECの場合はスクレイピング（在庫チェック）
+                    need_scrape = src_price <= 0 or (not is_major_ec and src.stock_status == "")
+                    if need_scrape:
+                        scrape_reason = "価格0円" if src_price <= 0 else "在庫チェック"
+                        print(f"    [{rank}位] {src.source_site} - {scrape_reason}、スクレイピング中...")
                         scraped = scrape_price_for_url(src.source_url)
 
                         # 在庫ステータスを更新
@@ -1959,9 +2165,11 @@ def main():
                             src_price = scraped.price
                             stock_msg = " (在庫切れ)" if not scraped.in_stock else ""
                             print(f"         → JPY {scraped.price:,.0f}{stock_msg} (scraped)")
+                        elif not scraped.in_stock:
+                            print(f"         → 在庫切れ")
                         else:
-                            error_msg = "在庫切れ" if not scraped.in_stock else scraped.error_message
-                            print(f"         → 取得失敗: {error_msg}")
+                            error_msg = scraped.error_message if scraped.error_message else "価格取得不可"
+                            print(f"         → {error_msg}")
 
                     # 仕入先タイトルから数量を抽出
                     source_quantity = extract_quantity_from_title(src.title, is_japanese=True)

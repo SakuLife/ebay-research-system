@@ -279,3 +279,9 @@ git commit -m "Update sourcing logic"
 git push
 # GitHub Actions automatically uses latest code
 ```
+
+## ログ共有ルール
+
+- ログは `logs/input.txt` に貼り付ける
+- 「ここ見て」と言われたら内容を確認
+- 確認後、ファイル名を `YYYY-MM-DD_HHMM.txt` 形式にリネーム

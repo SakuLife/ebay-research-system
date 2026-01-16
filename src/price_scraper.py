@@ -82,7 +82,8 @@ class PriceScraper:
         elif "shopping.yahoo.co.jp" in url_lower:
             return self._scrape_yahoo(url)
         else:
-            return ScrapedPrice(price=0, success=False, error_message=f"Unsupported site: {url[:50]}")
+            # 汎用スクレイパー（在庫切れ検出のみ）
+            return self._scrape_generic(url)
 
     def _scrape_rakuten(self, url: str) -> ScrapedPrice:
         """
@@ -589,6 +590,108 @@ class PriceScraper:
             "カートに入れる",
             "今すぐ買う",
             '"availability"\\s*:\\s*"InStock"',
+        ]
+
+        for pattern in in_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (True, "in_stock")
+
+        # 判定不能
+        return (True, "unknown")
+
+    def _scrape_generic(self, url: str) -> ScrapedPrice:
+        """
+        汎用スクレイパー: 任意のサイトから在庫切れを検出する.
+
+        価格抽出は行わず、在庫切れの検出のみを行う.
+        merdisney.jp等の小規模ECサイト向け.
+        """
+        try:
+            print(f"    [Scrape] Fetching page (generic)...")
+            response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
+            response.raise_for_status()
+            html = response.text
+
+            in_stock, stock_status = self._check_generic_stock(html)
+
+            if not in_stock:
+                print(f"    [Scrape] 在庫切れ検出 (generic)")
+                return ScrapedPrice(
+                    price=0, success=False, error_message="Out of stock",
+                    in_stock=False, stock_status="out_of_stock"
+                )
+
+            # 在庫ありの場合は価格不明として返す（価格抽出は行わない）
+            return ScrapedPrice(
+                price=0, success=False, error_message="Price extraction not supported",
+                in_stock=True, stock_status=stock_status
+            )
+
+        except requests.exceptions.RequestException as e:
+            return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
+        except Exception as e:
+            return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}")
+
+    def _check_generic_stock(self, html: str) -> tuple:
+        """
+        汎用的な在庫切れ検出.
+
+        様々なECサイトで共通して使われる在庫切れパターンをチェック.
+
+        Returns:
+            (in_stock: bool, stock_status: str)
+        """
+        # 在庫切れを示す汎用パターン
+        out_of_stock_patterns = [
+            # 日本語
+            "在庫切れ",
+            "売り切れ",
+            "品切れ",
+            "完売",
+            "sold out",
+            "soldout",
+            "入荷待ち",
+            "再入荷待ち",
+            "予約受付終了",
+            "販売終了",
+            "取扱終了",
+            "取り扱い終了",
+            "お取り扱いできません",
+            "現在お取り扱いしておりません",
+            "この商品は現在販売しておりません",
+            "ご購入いただけません",
+            "カートに入れることができません",
+            # 英語
+            "out of stock",
+            "out-of-stock",
+            "currently unavailable",
+            "not available",
+            "no longer available",
+            # Schema.org / 構造化データ
+            r'"availability"\s*:\s*"(?:https?://schema\.org/)?(?:OutOfStock|SoldOut|Discontinued)"',
+            r'"availability"\s*:\s*"outofstock"',
+            # CSSクラス
+            r'class="[^"]*(?:sold-?out|out-?of-?stock|unavailable)[^"]*"',
+            # data属性
+            r'data-(?:stock|availability)="(?:0|false|out|none)"',
+        ]
+
+        for pattern in out_of_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (False, "out_of_stock")
+
+        # 在庫ありを示すパターン
+        in_stock_patterns = [
+            "在庫あり",
+            "在庫わずか",
+            "残りわずか",
+            r"残り\d+点",
+            "カートに入れる",
+            "カートに追加",
+            "今すぐ購入",
+            "購入する",
+            r'"availability"\s*:\s*"(?:https?://schema\.org/)?InStock"',
+            r'"availability"\s*:\s*"instock"',
         ]
 
         for pattern in in_stock_patterns:

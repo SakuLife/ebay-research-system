@@ -30,13 +30,13 @@ def update_status(sheet_client, row_number: int, status: str, log: str = ""):
     """Update status column only."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
 
-    # Update U column (status) - column 21
-    status_cell = f"U{row_number}"
+    # Update V column (status) - column 22
+    status_cell = f"V{row_number}"
     worksheet.update(range_name=status_cell, values=[[status]])
 
-    # Update V column (memo) if provided - column 22
+    # Update X column (memo) if provided - column 24
     if log:
-        memo_cell = f"V{row_number}"
+        memo_cell = f"X{row_number}"
         current_memo = worksheet.acell(memo_cell).value or ""
         new_memo = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {log}"
         if current_memo:
@@ -59,7 +59,7 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
     except Exception:
         pass  # Row doesn't exist yet, which is fine
 
-    # Prepare row data matching INPUT_SHEET_COLUMNS (22列構成: A-V)
+    # Prepare row data matching INPUT_SHEET_COLUMNS (24列構成: A-X)
     row_data = [""] * len(INPUT_SHEET_COLUMNS)
 
     # Map data to columns
@@ -69,38 +69,40 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
     # D: カテゴリ番号（先頭ゼロを保持するため、'を付けてテキスト扱いに）
     cat_id = data.get("category_id", "")
     row_data[3] = f"'{cat_id}" if cat_id else ""
+    row_data[4] = data.get("condition", "")  # E: 新品中古
 
-    # ソーシング結果（国内最安①②③: E-M列）
+    # ソーシング結果（国内最安①②③: F-N列）
     sourcing_results = data.get("sourcing_results", [])
     for idx, result in enumerate(sourcing_results[:3]):
-        name_col = 4 + (idx * 3)   # E=4, H=7, K=10
-        url_col = 5 + (idx * 3)    # F=5, I=8, L=11
-        price_col = 6 + (idx * 3)  # G=6, J=9, M=12
+        name_col = 5 + (idx * 3)   # F=5, I=8, L=11
+        url_col = 6 + (idx * 3)    # G=6, J=9, M=12
+        price_col = 7 + (idx * 3)  # H=7, K=10, N=13
         row_data[name_col] = result.get("name", "")[:50] if result.get("name") else ""
         row_data[url_col] = result.get("url", "")
         row_data[price_col] = str(result.get("price", "")) if result.get("price") else ""
 
-    # eBay情報 (N-P列)
-    row_data[13] = data.get("ebay_url", "")  # N: eBayリンク
-    row_data[14] = str(data.get("ebay_price", ""))  # O: 販売価格（米ドル）
-    row_data[15] = str(data.get("ebay_shipping", ""))  # P: 販売送料（米ドル）
+    # eBay情報 (O-Q列)
+    row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
+    row_data[15] = str(data.get("ebay_price", ""))  # P: 販売価格（米ドル）
+    row_data[16] = str(data.get("ebay_shipping", ""))  # Q: 販売送料（米ドル）
 
-    # 利益計算結果 (Q-T列)
-    row_data[16] = str(data.get("profit_no_rebate", ""))  # Q: 還付抜き利益額（円）
-    row_data[17] = str(data.get("profit_margin_no_rebate", ""))  # R: 利益率%（還付抜き）
-    row_data[18] = str(data.get("profit_with_rebate", ""))  # S: 還付あり利益額（円）
-    row_data[19] = str(data.get("profit_margin_with_rebate", ""))  # T: 利益率%（還付あり）
+    # 利益計算結果 (R-U列)
+    row_data[17] = str(data.get("profit_no_rebate", ""))  # R: 還付抜き利益額（円）
+    row_data[18] = str(data.get("profit_margin_no_rebate", ""))  # S: 利益率%（還付抜き）
+    row_data[19] = str(data.get("profit_with_rebate", ""))  # T: 還付あり利益額（円）
+    row_data[20] = str(data.get("profit_margin_with_rebate", ""))  # U: 利益率%（還付あり）
 
-    # ステータスとメモ (U-V列)
+    # ステータスとメモ (V, W, X列)
     if data.get("error"):
-        row_data[20] = "エラー"  # U: ステータス
-        row_data[21] = f"ERROR: {data.get('error')}"  # V: メモ
+        row_data[21] = "エラー"  # V: ステータス
+        row_data[23] = f"ERROR: {data.get('error')}"  # X: メモ
     else:
-        row_data[20] = "要確認"  # U: ステータス
-        row_data[21] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # V: メモ
+        row_data[21] = "要確認"  # V: ステータス
+        row_data[23] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # X: メモ
+    # W: 出品フラグは空（ユーザーが手動で入力）
 
-    # Write to specific row (A〜V列：22列)
-    cell_range = f"A{row_number}:V{row_number}"
+    # Write to specific row (A〜X列：24列)
+    cell_range = f"A{row_number}:X{row_number}"
     worksheet.update(range_name=cell_range, values=[row_data])
 
     print(f"  [WRITE] Written to row {row_number}")

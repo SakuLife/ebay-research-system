@@ -1189,20 +1189,21 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     # Prepare row data matching INPUT_SHEET_COLUMNS
     row_data = [""] * len(INPUT_SHEET_COLUMNS)
 
-    # Map data to columns (19 columns: A-S)
-    row_data[0] = datetime.now().strftime("%Y-%m-%d")  # 日付
-    row_data[1] = data.get("keyword", "")  # キーワード
-    row_data[2] = data.get("category_name", "")  # カテゴリ
+    # Map data to columns (24 columns: A-X)
+    row_data[0] = datetime.now().strftime("%Y-%m-%d")  # A: 日付
+    row_data[1] = data.get("keyword", "")  # B: キーワード
+    row_data[2] = data.get("category_name", "")  # C: カテゴリ
     # カテゴリ番号（先頭ゼロを保持するため、'を付けてテキスト扱いに）
     cat_id = data.get("category_id", "")
-    row_data[3] = f"'{cat_id}" if cat_id else ""  # カテゴリ番号
+    row_data[3] = f"'{cat_id}" if cat_id else ""  # D: カテゴリ番号
+    row_data[4] = data.get("condition", "")  # E: 新品中古
 
     # ソーシング結果（国内最安①②③）- 商品名、リンク、価格
     sourcing_results = data.get("sourcing_results", [])
     for idx, result in enumerate(sourcing_results[:3]):
-        title_col = 4 + (idx * 3)  # 4, 7, 10 (商品名)
-        url_col = 5 + (idx * 3)    # 5, 8, 11 (リンク)
-        price_col = 6 + (idx * 3)  # 6, 9, 12 (価格)
+        title_col = 5 + (idx * 3)  # 5, 8, 11 (商品名: F, I, L)
+        url_col = 6 + (idx * 3)    # 6, 9, 12 (リンク: G, J, M)
+        price_col = 7 + (idx * 3)  # 7, 10, 13 (価格: H, K, N)
         row_data[title_col] = result.get("title", "")
         row_data[url_col] = result.get("url", "")
         # 価格が0円の場合は「要確認」と表示
@@ -1210,26 +1211,27 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
         row_data[price_col] = str(int(price)) if price > 0 else "要確認"
 
     # eBay情報
-    row_data[13] = data.get("ebay_url", "")  # eBayリンク (N列)
-    row_data[14] = str(data.get("ebay_price", ""))  # 販売価格（米ドル）(O列)
-    row_data[15] = str(data.get("ebay_shipping", ""))  # 販売送料（米ドル）(P列)
+    row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
+    row_data[15] = str(data.get("ebay_price", ""))  # P: 販売価格（米ドル）
+    row_data[16] = str(data.get("ebay_shipping", ""))  # Q: 販売送料（米ドル）
 
     # 利益計算結果
-    row_data[16] = str(data.get("profit_no_rebate", ""))  # 還付抜き利益額（円）(Q列)
-    row_data[17] = str(data.get("profit_margin_no_rebate", ""))  # 利益率%（還付抜き）(R列)
-    row_data[18] = str(data.get("profit_with_rebate", ""))  # 還付あり利益額（円）(S列)
-    row_data[19] = str(data.get("profit_margin_with_rebate", ""))  # 利益率%（還付あり）(T列)
+    row_data[17] = str(data.get("profit_no_rebate", ""))  # R: 還付抜き利益額（円）
+    row_data[18] = str(data.get("profit_margin_no_rebate", ""))  # S: 利益率%（還付抜き）
+    row_data[19] = str(data.get("profit_with_rebate", ""))  # T: 還付あり利益額（円）
+    row_data[20] = str(data.get("profit_margin_with_rebate", ""))  # U: 利益率%（還付あり）
 
-    # ステータスとメモ
+    # ステータスとメモ（出品フラグは空）
     if data.get("error"):
-        row_data[20] = "エラー"  # ステータス (U列)
-        row_data[21] = f"ERROR: {data.get('error')}"  # メモ (V列)
+        row_data[21] = "エラー"  # V: ステータス
+        row_data[23] = f"ERROR: {data.get('error')}"  # X: メモ
     else:
-        row_data[20] = "要確認"  # ステータス (U列)
-        row_data[21] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # メモ (V列)
+        row_data[21] = "要確認"  # V: ステータス
+        row_data[23] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # X: メモ
+    # W: 出品フラグは空（ユーザーが手動で入力）
 
-    # Write to specific row (A〜V列：22列)
-    cell_range = f"A{row_number}:V{row_number}"
+    # Write to specific row (A〜X列：24列)
+    cell_range = f"A{row_number}:X{row_number}"
     worksheet.update(range_name=cell_range, values=[row_data])
 
     print(f"  [WRITE] Written to row {row_number}")
@@ -1307,7 +1309,7 @@ def main():
     # Parse values
     min_price_usd = float(min_price_str) if min_price_str.replace(".", "").isdigit() else 100.0
     items_per_keyword = int(items_per_keyword_str) if items_per_keyword_str.isdigit() else 5
-    items_per_keyword = max(1, min(10, items_per_keyword))  # Clamp to 1-10
+    items_per_keyword = max(1, min(100, items_per_keyword))  # Clamp to 1-100
     min_sold = int(min_sold_str) if min_sold_str.isdigit() else 0
     packaging_weight_g = int(packaging_weight_str) if packaging_weight_str.isdigit() else 500
     size_multiplier = float(size_multiplier_str) if size_multiplier_str else 1.0

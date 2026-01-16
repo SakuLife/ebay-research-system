@@ -1224,9 +1224,9 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data[0] = datetime.now().strftime("%Y-%m-%d")  # A: 日付
     row_data[1] = data.get("keyword", "")  # B: キーワード
     row_data[2] = data.get("category_name", "")  # C: カテゴリ
-    # カテゴリ番号（先頭ゼロを保持するため、'を付けてテキスト扱いに）
+    # カテゴリ番号（そのまま書き込み）
     cat_id = data.get("category_id", "")
-    row_data[3] = f"'{cat_id}" if cat_id else ""  # D: カテゴリ番号
+    row_data[3] = str(cat_id) if cat_id else ""  # D: カテゴリ番号
     row_data[4] = data.get("condition", "")  # E: 新品中古
 
     # ソーシング結果（国内最安①②③）- 商品名、リンク、価格

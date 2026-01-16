@@ -284,4 +284,4 @@ git push
 
 - ログは `logs/input.txt` に貼り付ける
 - 「ここ見て」と言われたら内容を確認
-- 確認後、ファイル名を `YYYY-MM-DD_HHMM.txt` 形式にリネーム
+- 確認後、ファイル名を `YYYY-MM-DD_HHMM.txt` 形式（JST）にリネーム

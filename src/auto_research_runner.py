@@ -985,6 +985,16 @@ EXCLUDED_URL_PATTERNS = [
     "kakaku.com",
     "price.com",
     "bestgate.net",
+    # 電子書籍・Kindle（物理的な商品ではない）
+    "/ebook/",
+    "-ebook/",
+    "ebook/dp/",
+    "/DIGITAL/",
+    "kindle",
+    "digital-text",
+    # Etsy（カスタム品・ハンドメイドが多く仕入先として不適切）
+    "etsy.com",
+    "etsy.jp",
 ]
 
 
@@ -1106,6 +1116,10 @@ def calculate_condition_score(title: str, source_site: str) -> float:
     国内商品のconditionスコアを計算する.
     新品/未開封は加点、中古/難ありは減点.
 
+    カード商品向け注意:
+    - 「美品」「極美品」等はカードでは中古を意味する
+    - PSAグレード品は過去に評価された商品なので中古扱い
+
     Returns:
         スコア（0.0〜2.0、1.0が基準）
     """
@@ -1117,15 +1131,17 @@ def calculate_condition_score(title: str, source_site: str) -> float:
     if any(kw in title_lower for kw in new_keywords):
         score += 0.3
 
-    # 中古系キーワード（減点、ただし即除外しない）
-    used_keywords = ["中古", "used", "難あり", "ジャンク", "訳あり", "傷あり", "プレイ用"]
+    # 中古系キーワード（減点）
+    used_keywords = [
+        "中古", "used", "難あり", "ジャンク", "訳あり", "傷あり", "プレイ用",
+        # カード向け中古キーワード
+        "美品", "極美品", "良品", "並品",
+        "psa", "bgs", "cgc", "graded",  # グレーディング済み = 中古
+        "mint", "excellent", "near mint", "nm", "ex",  # 状態評価 = 中古
+        "スリーブ", "白欠け", "初期傷", "微傷",
+    ]
     if any(kw in title_lower for kw in used_keywords):
-        score -= 0.3
-
-    # 状態良好系（軽い加点）
-    good_condition = ["美品", "極美品", "良品", "mint", "excellent", "near mint"]
-    if any(kw in title_lower for kw in good_condition):
-        score += 0.1
+        score -= 0.7  # 中古は大幅減点（New条件時は実質除外に近い）
 
     return max(0.1, min(2.0, score))
 

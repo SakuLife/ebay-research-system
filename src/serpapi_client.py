@@ -759,9 +759,22 @@ class SerpApiClient:
                     source = item.get("source", "")
                     thumbnail = item.get("thumbnail", "")
 
-                    # リンク取得（優先順位: link > product_link > source_link > sellers[0].link）
-                    # 'link'フィールドが直接の商品URLを持つことがある
-                    link = item.get("link", "") or item.get("product_link", "") or item.get("source_link", "")
+                    # リンク取得（google.com以外のURLを優先）
+                    # linkがgoogle.comの場合はproduct_linkやsource_linkを先に使う
+                    link_field = item.get("link", "")
+                    product_link_field = item.get("product_link", "")
+                    source_link_field = item.get("source_link", "")
+
+                    # google.com以外のURLを優先的に選択
+                    if product_link_field and "google.com" not in product_link_field:
+                        link = product_link_field
+                    elif source_link_field and "google.com" not in source_link_field:
+                        link = source_link_field
+                    elif link_field and "google.com" not in link_field:
+                        link = link_field
+                    else:
+                        # すべてgoogle.comの場合は後続の処理で抽出を試みる
+                        link = link_field or product_link_field or source_link_field
 
                     # sellersがあればそこから直接リンクを取得
                     if not link or "google.com" in link:

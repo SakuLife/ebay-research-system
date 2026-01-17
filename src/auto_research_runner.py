@@ -1164,12 +1164,13 @@ def is_limited_edition_product(title: str) -> tuple[bool, str]:
         # 日本語
         "限定", "限定版", "限定盤", "特典", "初回", "先着", "予約特典",
         "数量限定", "期間限定", "店舗限定", "コレクターズ", "特別版",
-        "プレミアム", "初版", "生産終了",
+        "プレミアム", "初版", "生産終了", "プロモ",
         # 英語
         "limited edition", "limited", "bonus", "first edition", "pre-order",
         "collector's", "collector", "special edition", "exclusive",
         "premium edition", "deluxe edition", "japan exclusive",
         "store exclusive", "event exclusive", "convention exclusive",
+        "promo", "promotional", "serial number",  # プロモカード、シリアル番号入り
     ]
 
     for kw in limited_keywords:
@@ -1764,6 +1765,19 @@ def main():
                 print(f"         Title: {ebay_title[:60]}...")
                 total_skipped += 1
                 continue
+
+            # PSA/BGS/CGC鑑定品はNew条件ではスキップ（鑑定済み=中古扱い）
+            if condition == "New":
+                ebay_title_lower = ebay_title.lower()
+                graded_keywords = ["psa10", "psa 10", "psa9", "psa 9", "psa8", "psa 8",
+                                   "bgs10", "bgs 10", "bgs9", "bgs 9",
+                                   "cgc10", "cgc 10", "cgc9", "cgc 9",
+                                   "graded", "鑑定済"]
+                is_graded = any(kw in ebay_title_lower for kw in graded_keywords)
+                if is_graded:
+                    print(f"\n  [SKIP] Graded/PSA item (not New): {ebay_title[:50]}...")
+                    total_skipped += 1
+                    continue
 
             # 画像URLも取得
             image_url = getattr(item, 'image_url', '') or ''

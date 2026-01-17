@@ -1146,6 +1146,39 @@ def calculate_condition_score(title: str, source_site: str) -> float:
     return max(0.1, min(2.0, score))
 
 
+def is_limited_edition_product(title: str) -> tuple[bool, str]:
+    """
+    限定品/プレミアム品/特典付き商品かどうか判定する.
+    これらの商品は一般的なECサイトで新品入手が困難なためスキップ対象.
+
+    Args:
+        title: eBay商品タイトル
+
+    Returns:
+        (判定結果, 検出されたキーワード)
+    """
+    title_lower = title.lower()
+
+    # 限定品を示すキーワード
+    limited_keywords = [
+        # 日本語
+        "限定", "限定版", "限定盤", "特典", "初回", "先着", "予約特典",
+        "数量限定", "期間限定", "店舗限定", "コレクターズ", "特別版",
+        "プレミアム", "初版", "生産終了",
+        # 英語
+        "limited edition", "limited", "bonus", "first edition", "pre-order",
+        "collector's", "collector", "special edition", "exclusive",
+        "premium edition", "deluxe edition", "japan exclusive",
+        "store exclusive", "event exclusive", "convention exclusive",
+    ]
+
+    for kw in limited_keywords:
+        if kw in title_lower:
+            return (True, kw)
+
+    return (False, "")
+
+
 def calculate_source_priority(source_site: str) -> float:
     """
     仕入先の優先度を計算する.
@@ -1369,12 +1402,12 @@ def find_best_matching_source(
 def get_processed_ebay_ids(sheet_client) -> set:
     """
     スプレッドシートから処理済みeBay商品IDを取得する.
-    eBayリンク列（N列）からitem IDを抽出.
+    eBayリンク列（O列）からitem IDを抽出.
     """
     try:
         worksheet = sheet_client.spreadsheet.worksheet("入力シート")
-        # N列（eBayリンク）を取得
-        ebay_urls = worksheet.col_values(14)  # N列 = 14番目
+        # O列（eBayリンク）を取得 - col_values()は1-indexed
+        ebay_urls = worksheet.col_values(15)  # O列 = 15番目
 
         processed_ids = set()
         for url in ebay_urls[1:]:  # ヘッダーをスキップ
@@ -1721,6 +1754,14 @@ def main():
             # 処理済みならスキップ
             if ebay_item_id and ebay_item_id in processed_ebay_ids:
                 print(f"\n  [SKIP] Already processed: {ebay_item_id}")
+                total_skipped += 1
+                continue
+
+            # 限定品/プレミアム品はスキップ（一般ECで新品入手困難）
+            is_limited, limited_keyword = is_limited_edition_product(ebay_title)
+            if is_limited:
+                print(f"\n  [SKIP] Limited/Premium product detected: '{limited_keyword}'")
+                print(f"         Title: {ebay_title[:60]}...")
                 total_skipped += 1
                 continue
 
@@ -2442,6 +2483,14 @@ def main():
                     "url": src.source_url,
                     "price": src_price
                 })
+
+            # 仕入先が取れなかった場合はスプシに書かずスキップ
+            # ただし「要価格確認」はURLが取れているので書き込む
+            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致"]
+            if error_reason in skip_errors:
+                print(f"\n  [SKIP] Not writing to sheet: {error_reason}")
+                total_skipped += 1
+                continue
 
             result_data = {
                 "keyword": keyword,

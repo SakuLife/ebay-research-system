@@ -1165,12 +1165,14 @@ def is_limited_edition_product(title: str) -> tuple[bool, str]:
         "限定", "限定版", "限定盤", "特典", "初回", "先着", "予約特典",
         "数量限定", "期間限定", "店舗限定", "コレクターズ", "特別版",
         "プレミアム", "初版", "生産終了", "プロモ",
+        "一番くじ",  # コンビニ抽選商品（フリマでしか入手不可）
         # 英語
         "limited edition", "limited", "bonus", "first edition", "pre-order",
         "collector's", "collector", "special edition", "exclusive",
         "premium edition", "deluxe edition", "japan exclusive",
         "store exclusive", "event exclusive", "convention exclusive",
         "promo", "promotional", "serial number",  # プロモカード、シリアル番号入り
+        "ichiban kuji", "lottery prize", "last one prize", "prize figure",  # 一番くじ系
     ]
 
     for kw in limited_keywords:

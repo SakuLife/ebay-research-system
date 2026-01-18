@@ -290,6 +290,144 @@ class GeminiClient:
             print(f"  [WARN] Failed to parse weight research result: {e}")
             return None
 
+    def validate_source_match(
+        self,
+        ebay_title: str,
+        ebay_price_usd: float,
+        source_title: str,
+        source_url: str,
+        source_price_jpy: float,
+        source_site: str,
+        condition: str = "New"
+    ) -> Optional['SourceValidationResult']:
+        """
+        eBay商品と国内仕入先の組み合わせが適切かをGeminiでチェックする.
+
+        Args:
+            ebay_title: eBay商品タイトル
+            ebay_price_usd: eBay販売価格（USD）
+            source_title: 仕入先商品タイトル
+            source_url: 仕入先URL
+            source_price_jpy: 仕入先価格（円）
+            source_site: 仕入先サイト名
+            condition: 商品コンディション（New/Used）
+
+        Returns:
+            SourceValidationResult。失敗時はNone。
+        """
+        if not self.is_enabled:
+            return None
+
+        prompt = f'''あなたはeBay転売の仕入れ判断アシスタントです。
+以下のeBay商品と国内仕入先の組み合わせが「仕入れとして適切か」を判断してください。
+
+【eBay商品（販売側）】
+タイトル: {ebay_title}
+価格: ${ebay_price_usd:.2f}
+コンディション: {condition}
+
+【国内仕入先（仕入れ側）】
+サイト: {source_site}
+タイトル: {source_title}
+URL: {source_url}
+価格: ¥{source_price_jpy:,.0f}
+
+【チェック観点】
+1. 同一商品か？
+   - タイトルから判断して、同じ商品を指しているか
+   - 型番、キャラクター名、商品シリーズが一致するか
+   - 全く違う商品を仕入れようとしていないか
+
+2. 購入可能なサイトか？
+   - 一般ECサイト（Amazon、楽天、Yahoo等）→ OK
+   - 小規模カードショップ、専門店 → OK
+   - フリマ・オークション（メルカリ、ヤフオク等）→ NG
+   - 転売サイト、相場サイト → NG
+   - 在庫がなさそう、販売終了っぽい → NG
+
+3. 仕入れ困難な商品か？
+   - 一番くじ、プライズ品 → 一般ECでは入手困難
+   - PSA/BGS鑑定済みカード → 中古品（Newでは仕入れ不可）
+   - 限定品、プロモ品 → 一般ECでは入手困難
+   - 予約商品、受注生産 → 納期リスク
+
+4. 価格の妥当性
+   - 仕入値が異常に高い（利益が出ない）
+   - 仕入値が異常に安い（偽物・詐欺の可能性）
+
+【出力形式】必ずこの形式で出力してください:
+VALID: [YES/NO]
+SUGGESTION: [accept/skip/retry]
+REASON: [1行で判断理由]
+ISSUES: [問題点をカンマ区切りで。なければ「なし」]
+
+【SUGGESTIONの意味】
+- accept: この仕入先でOK
+- skip: この商品自体をスキップ（仕入れ困難、または全く違う商品）
+- retry: この仕入先はNG、別の仕入先を試すべき
+
+それでは判断してください:'''
+
+        try:
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            return self._parse_validation_result(result)
+        except Exception as e:
+            print(f"  [WARN] Gemini validation failed: {e}")
+            return None
+
+    def _parse_validation_result(self, text: str) -> Optional['SourceValidationResult']:
+        """
+        Geminiの検証結果をパースしてSourceValidationResultに変換.
+        """
+        try:
+            is_valid = False
+            suggestion = "skip"
+            reason = ""
+            issues = []
+
+            lines = text.split('\n')
+            for line in lines:
+                line = line.strip()
+                upper_line = line.upper()
+
+                if upper_line.startswith('VALID:'):
+                    is_valid = 'YES' in upper_line
+                elif upper_line.startswith('SUGGESTION:'):
+                    if 'ACCEPT' in upper_line:
+                        suggestion = "accept"
+                    elif 'RETRY' in upper_line:
+                        suggestion = "retry"
+                    else:
+                        suggestion = "skip"
+                elif upper_line.startswith('REASON:'):
+                    reason = line.split(':', 1)[1].strip() if ':' in line else ""
+                elif upper_line.startswith('ISSUES:'):
+                    issues_str = line.split(':', 1)[1].strip() if ':' in line else ""
+                    if issues_str and issues_str != "なし":
+                        issues = [i.strip() for i in issues_str.split(',')]
+
+            return SourceValidationResult(
+                is_valid=is_valid,
+                suggestion=suggestion,
+                reason=reason,
+                issues=issues,
+                raw_response=text
+            )
+        except Exception as e:
+            print(f"  [WARN] Failed to parse validation result: {e}")
+            return None
+
+
+@dataclass
+class SourceValidationResult:
+    """Geminiによる仕入先検証結果."""
+    is_valid: bool  # 仕入先として適切か
+    suggestion: str  # "accept", "skip", "retry"
+    reason: str  # 判断理由
+    issues: List[str]  # 検出された問題点
+    raw_response: str  # Geminiの生出力
+
 
 @dataclass
 class WeightResearchResult:

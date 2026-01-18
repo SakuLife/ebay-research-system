@@ -2201,6 +2201,7 @@ def main():
             total_source_price = 0
             similarity = 0.0
             needs_price_check = False  # 大手ECで価格なしの場合
+            working_candidates = []  # Gemini検証用に保持
 
             # eBayタイトルから数量を抽出
             ebay_quantity = extract_quantity_from_title(ebay_title, is_japanese=False)
@@ -2381,6 +2382,49 @@ def main():
                     # 調整後価格をsourceにも反映（スプレッドシート出力用）
                     for c in working_candidates:
                         c["ranked_src"].source.source_price_jpy = c["adjusted_price"]
+
+            # === Gemini検証: 仕入先が適切かチェック ===
+            if best_source and not error_reason:
+                gemini_validator = GeminiClient()
+                if gemini_validator.is_enabled:
+                    print(f"\n  [Gemini検証] 仕入先チェック中...")
+                    validation = gemini_validator.validate_source_match(
+                        ebay_title=ebay_title,
+                        ebay_price_usd=ebay_price,
+                        source_title=best_source.title,
+                        source_url=best_source.source_url,
+                        source_price_jpy=total_source_price,
+                        source_site=best_source.source_site,
+                        condition=condition
+                    )
+
+                    if validation:
+                        print(f"    結果: {'OK' if validation.is_valid else 'NG'} ({validation.suggestion})")
+                        print(f"    理由: {validation.reason}")
+                        if validation.issues:
+                            print(f"    問題: {', '.join(validation.issues)}")
+
+                        if validation.suggestion == "skip":
+                            # この商品自体をスキップ
+                            print(f"  [Gemini検証] → スキップ")
+                            error_reason = f"Gemini検証NG: {validation.reason[:30]}"
+                            best_source = None
+                        elif validation.suggestion == "retry":
+                            # 次の候補を試す（現在は簡易版なのでスキップ扱い）
+                            # TODO: working_candidatesの2番目以降を試すロジック
+                            if len(working_candidates) > 1:
+                                print(f"  [Gemini検証] → 次の候補を試行（{len(working_candidates)-1}件残り）")
+                                # 2番目の候補を使用
+                                next_candidate = working_candidates[1]
+                                best_source = next_candidate["ranked_src"].source
+                                total_source_price = next_candidate["adjusted_price"]
+                                similarity = next_candidate["ranked_src"].similarity
+                                print(f"  [RETRY] {best_source.source_site} - JPY {total_source_price:.0f}")
+                            else:
+                                print(f"  [Gemini検証] → 他の候補なし、スキップ")
+                                error_reason = f"Gemini検証NG: {validation.reason[:30]}"
+                                best_source = None
+                        # accept の場合はそのまま進む
 
             # Step 5: Calculate profit (with weight estimation)
             profit_no_rebate = 0

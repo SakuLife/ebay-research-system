@@ -52,6 +52,86 @@ def extract_model_numbers(title: str) -> List[str]:
     return unique
 
 
+@dataclass
+class ImageAnalysisResult:
+    """Geminiによる画像分析結果."""
+    should_skip: bool  # スキップすべきか
+    skip_reason: str  # スキップ理由（空文字列ならスキップ不要）
+    product_type: str  # 商品タイプ（card, figure, set, lottery, etc.）
+    confidence: str  # 確信度（high, medium, low）
+    details: str  # 詳細説明
+    raw_response: str  # Geminiの生出力
+
+
+# グローバル使用量トラッカー（モジュールレベル）
+_gemini_usage = {
+    "calls": [],  # {"method": str, "input_tokens": int, "output_tokens": int}
+}
+
+
+def reset_gemini_usage():
+    """使用量をリセット."""
+    _gemini_usage["calls"] = []
+
+
+def get_gemini_usage_summary() -> dict:
+    """
+    使用量サマリーを取得.
+
+    Returns:
+        {
+            "total_calls": int,
+            "calls_by_method": {"translate": 1, "validate": 2, ...},
+            "estimated_input_tokens": int,
+            "estimated_output_tokens": int,
+            "estimated_cost_usd": float,
+            "estimated_cost_jpy": int,
+        }
+    """
+    calls = _gemini_usage["calls"]
+    if not calls:
+        return {
+            "total_calls": 0,
+            "calls_by_method": {},
+            "estimated_input_tokens": 0,
+            "estimated_output_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "estimated_cost_jpy": 0,
+        }
+
+    total_input = sum(c.get("input_tokens", 0) for c in calls)
+    total_output = sum(c.get("output_tokens", 0) for c in calls)
+
+    # Gemini 2.0 Flash pricing (2024): $0.10/1M input, $0.40/1M output
+    cost_usd = (total_input / 1_000_000 * 0.10) + (total_output / 1_000_000 * 0.40)
+
+    # USD -> JPY (レート約150円)
+    cost_jpy = int(cost_usd * 150)
+
+    calls_by_method = {}
+    for c in calls:
+        m = c.get("method", "unknown")
+        calls_by_method[m] = calls_by_method.get(m, 0) + 1
+
+    return {
+        "total_calls": len(calls),
+        "calls_by_method": calls_by_method,
+        "estimated_input_tokens": total_input,
+        "estimated_output_tokens": total_output,
+        "estimated_cost_usd": cost_usd,
+        "estimated_cost_jpy": cost_jpy,
+    }
+
+
+def _log_gemini_call(method: str, input_tokens: int, output_tokens: int):
+    """Gemini呼び出しを記録."""
+    _gemini_usage["calls"].append({
+        "method": method,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    })
+
+
 class GeminiClient:
     """Gemini APIを使って商品名を翻訳するクライアント."""
 
@@ -102,6 +182,8 @@ class GeminiClient:
             result = response.text.strip()
             # 余計な改行や空白を除去
             result = ' '.join(result.split())
+            # 使用量を記録（推定トークン数）
+            _log_gemini_call("translate", len(prompt) // 4, len(result) // 4)
             return result
         except Exception as e:
             print(f"  [WARN] Gemini translation failed: {e}")
@@ -132,6 +214,7 @@ class GeminiClient:
         try:
             response = self.model.generate_content(prompt)
             result = response.text.strip()
+            _log_gemini_call("extract", len(prompt) // 4, len(result) // 4)
             if result == "なし" or not result:
                 return None
             return result
@@ -209,6 +292,7 @@ class GeminiClient:
         try:
             response = self.model.generate_content(prompt)
             result = response.text.strip()
+            _log_gemini_call("weight", len(prompt) // 4, len(result) // 4)
             return self._parse_weight_research_result(result)
         except Exception as e:
             print(f"  [WARN] Gemini weight research failed: {e}")
@@ -371,6 +455,7 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
         try:
             response = self.model.generate_content(prompt)
             result = response.text.strip()
+            _log_gemini_call("validate", len(prompt) // 4, len(result) // 4)
             return self._parse_validation_result(result)
         except Exception as e:
             print(f"  [WARN] Gemini validation failed: {e}")
@@ -416,6 +501,131 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
             )
         except Exception as e:
             print(f"  [WARN] Failed to parse validation result: {e}")
+            return None
+
+    def analyze_ebay_item_image(
+        self,
+        image_url: str,
+        ebay_title: str,
+        condition: str = "New"
+    ) -> Optional['ImageAnalysisResult']:
+        """
+        eBay商品の画像を分析し、仕入れ困難な商品かを判定する.
+
+        Google Lensでは同じ画像を探すだけだが、Geminiは画像を見て
+        「これはカード」「セット売り」「一番くじ品」などを判定できる。
+
+        Args:
+            image_url: eBay商品画像のURL
+            ebay_title: eBay商品タイトル（参考情報）
+            condition: 商品コンディション（New/Used）
+
+        Returns:
+            ImageAnalysisResult。失敗時はNone。
+        """
+        if not self.is_enabled:
+            return None
+
+        prompt = f'''あなたはeBay商品の仕入れ可否を判定するアシスタントです。
+以下の商品画像とタイトルを見て、日本の大手ECサイト（Amazon、楽天、Yahoo）で
+新品として仕入れられるかを判定してください。
+
+【商品情報】
+タイトル: {ebay_title}
+コンディション: {condition}
+画像URL: {image_url}
+
+【スキップすべき商品の例】
+1. トレーディングカード（TCG/CCG）
+   - ポケモンカード、遊戯王、ワンピースカード等
+   - 特にシングルカード（1枚売り）
+   - PSA/BGS鑑定スラブ入りカード
+
+2. 一番くじ・プライズ品
+   - 「一番くじ」「Ichiban Kuji」の文字
+   - A賞、B賞、ラストワン賞などの表記
+   - コンビニ限定、ゲーセン景品
+
+3. セット売り・まとめ売り
+   - 複数アイテムがまとめて写っている
+   - 「Lot」「Bundle」「Set of」の表記
+   - 新品で同じセットは入手困難
+
+4. 限定品・プロモ品
+   - イベント限定、店舗限定
+   - 予約特典、初回特典
+   - シリアルナンバー入り
+
+【出力形式】必ずこの形式で出力:
+SKIP: [YES/NO]
+REASON: [スキップ理由。スキップ不要なら「なし」]
+TYPE: [card/lottery/set/promo/figure/toy/other]
+CONFIDENCE: [high/medium/low]
+DETAILS: [画像から読み取った詳細（1行）]
+
+それでは画像を分析してください:'''
+
+        try:
+            # Gemini 2.0 Flash は画像URLを直接渡せる
+            response = self.model.generate_content([prompt, {"url": image_url}])
+            result = response.text.strip()
+            _log_gemini_call("image_analysis", len(prompt) // 4 + 500, len(result) // 4)  # 画像は約500トークン相当
+            return self._parse_image_analysis_result(result)
+        except Exception as e:
+            # 画像取得失敗の場合はタイトルのみで判定を試みる
+            try:
+                fallback_prompt = prompt.replace(f"画像URL: {image_url}", "画像URL: (取得失敗、タイトルのみで判定)")
+                response = self.model.generate_content(fallback_prompt)
+                result = response.text.strip()
+                _log_gemini_call("image_analysis", len(fallback_prompt) // 4, len(result) // 4)
+                return self._parse_image_analysis_result(result)
+            except Exception as e2:
+                print(f"  [WARN] Gemini image analysis failed: {e2}")
+                return None
+
+    def _parse_image_analysis_result(self, text: str) -> Optional['ImageAnalysisResult']:
+        """
+        Geminiの画像分析結果をパースしてImageAnalysisResultに変換.
+        """
+        try:
+            should_skip = False
+            skip_reason = ""
+            product_type = "other"
+            confidence = "low"
+            details = ""
+
+            lines = text.split('\n')
+            for line in lines:
+                line = line.strip()
+                upper_line = line.upper()
+
+                if upper_line.startswith('SKIP:'):
+                    should_skip = 'YES' in upper_line
+                elif upper_line.startswith('REASON:'):
+                    skip_reason = line.split(':', 1)[1].strip() if ':' in line else ""
+                    if skip_reason == "なし":
+                        skip_reason = ""
+                elif upper_line.startswith('TYPE:'):
+                    type_value = line.split(':', 1)[1].strip().lower() if ':' in line else "other"
+                    if type_value in ["card", "lottery", "set", "promo", "figure", "toy", "other"]:
+                        product_type = type_value
+                elif upper_line.startswith('CONFIDENCE:'):
+                    conf_value = line.split(':', 1)[1].strip().lower() if ':' in line else "low"
+                    if conf_value in ["high", "medium", "low"]:
+                        confidence = conf_value
+                elif upper_line.startswith('DETAILS:'):
+                    details = line.split(':', 1)[1].strip() if ':' in line else ""
+
+            return ImageAnalysisResult(
+                should_skip=should_skip,
+                skip_reason=skip_reason,
+                product_type=product_type,
+                confidence=confidence,
+                details=details,
+                raw_response=text
+            )
+        except Exception as e:
+            print(f"  [WARN] Failed to parse image analysis result: {e}")
             return None
 
 

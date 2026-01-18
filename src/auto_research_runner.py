@@ -21,7 +21,7 @@ from .config_loader import load_all_configs
 from .weight_estimator import estimate_weight_from_title, detect_product_type
 from .models import SourceOffer, ListingCandidate
 from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shopping
-from .gemini_client import GeminiClient
+from .gemini_client import GeminiClient, reset_gemini_usage, get_gemini_usage_summary
 from .price_scraper import scrape_price_for_url
 
 
@@ -1543,6 +1543,9 @@ def main():
             "results": results_count
         })
 
+    # Gemini使用量をリセット
+    reset_gemini_usage()
+
     # Load environment
     load_dotenv()
 
@@ -1794,6 +1797,23 @@ def main():
 
             # 画像URLも取得
             image_url = getattr(item, 'image_url', '') or ''
+
+            # === Gemini画像分析: カード/セット/一番くじ等を早期検出 ===
+            # カテゴリスキップされなかった場合でも、画像から判定可能
+            if condition == "New" and image_url:
+                gemini_analyzer = GeminiClient()
+                if gemini_analyzer.is_enabled:
+                    image_analysis = gemini_analyzer.analyze_ebay_item_image(
+                        image_url=image_url,
+                        ebay_title=ebay_title,
+                        condition=condition
+                    )
+                    if image_analysis and image_analysis.should_skip and image_analysis.confidence in ["high", "medium"]:
+                        print(f"\n  [SKIP] Gemini image analysis: {image_analysis.skip_reason}")
+                        print(f"         Type: {image_analysis.product_type} (confidence: {image_analysis.confidence})")
+                        print(f"         Title: {ebay_title[:50]}...")
+                        total_skipped += 1
+                        continue
 
             print(f"\n  Processing: {ebay_url}")
             print(f"  [INFO] eBay title: {ebay_title[:60]}..." if len(ebay_title) > 60 else f"  [INFO] eBay title: {ebay_title}")
@@ -2619,6 +2639,22 @@ def main():
         print(f"\n  Details:")
         for i, log in enumerate(serpapi_usage_log, 1):
             print(f"  {i:2}. [{log['type']:12}] {log['query']} → {log['results']}件")
+
+    # Gemini使用履歴サマリー
+    gemini_summary = get_gemini_usage_summary()
+    if gemini_summary["total_calls"] > 0:
+        print(f"\n--- Gemini API Usage Log ({gemini_summary['total_calls']} calls) ---")
+        # メソッド別に集計
+        for method, count in sorted(gemini_summary["calls_by_method"].items()):
+            print(f"  {method}: {count} calls")
+
+        print(f"\n  Token usage (estimated):")
+        print(f"    Input:  {gemini_summary['estimated_input_tokens']:,} tokens")
+        print(f"    Output: {gemini_summary['estimated_output_tokens']:,} tokens")
+
+        print(f"\n  Cost (estimated):")
+        print(f"    USD: ${gemini_summary['estimated_cost_usd']:.4f}")
+        print(f"    JPY: {gemini_summary['estimated_cost_jpy']:,}円")
 
     print(f"{'='*60}")
 

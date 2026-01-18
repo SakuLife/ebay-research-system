@@ -256,10 +256,23 @@ class SerpApiClient:
         }
         ebay_domain = domain_map.get(market, "ebay.co.uk")
 
+        # New条件の場合、仕入れ困難な商品を除外ワードで除く
+        search_keyword = keyword
+        if condition.lower() == "new":
+            exclude_terms = [
+                "-card", "-cards", "-tcg", "-ccg",  # カード系
+                "-kuji", "-lottery", "-prize",  # 一番くじ系
+                "-PSA", "-BGS", "-CGC", "-graded",  # 鑑定品
+                "-promo", "-promotional",  # プロモ
+                "-used", "-junk",  # 中古
+            ]
+            search_keyword = f"{keyword} {' '.join(exclude_terms)}"
+            print(f"  [eBay] Auto-exclude for New: card, kuji, PSA, promo")
+
         params = {
             "engine": "ebay",
             "ebay_domain": ebay_domain,
-            "_nkw": keyword,
+            "_nkw": search_keyword,
             "LH_Sold": "1",       # 売れた商品
             "LH_Complete": "1",   # 完了したリスティング
             "_ipg": str(min(max_results * 2, 60)),  # 余裕を持って取得
@@ -282,7 +295,7 @@ class SerpApiClient:
         # Condition filtering will be done on domestic source search instead
 
         try:
-            print(f"  [SerpApi] Searching sold items: '{keyword}' on {ebay_domain}")
+            print(f"  [SerpApi] Searching sold items: '{search_keyword[:60]}...' on {ebay_domain}" if len(search_keyword) > 60 else f"  [SerpApi] Searching sold items: '{search_keyword}' on {ebay_domain}")
             search = GoogleSearch(params)
             results = search.get_dict()
 

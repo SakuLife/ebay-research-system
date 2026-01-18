@@ -1781,6 +1781,17 @@ def main():
                     total_skipped += 1
                     continue
 
+            # CCG/TCGカード系カテゴリはNew条件ではスキップ（大手ECで新品入手困難）
+            # - CCG Individual Cards (183454)
+            # - Non-Sport Trading Cards (183050)
+            if condition == "New" and category_id:
+                card_category_ids = ["183454", "183050"]
+                if category_id in card_category_ids:
+                    print(f"\n  [SKIP] Card category (hard to source new): {category_name}")
+                    print(f"         Title: {ebay_title[:50]}...")
+                    total_skipped += 1
+                    continue
+
             # 画像URLも取得
             image_url = getattr(item, 'image_url', '') or ''
 

@@ -1679,8 +1679,8 @@ def main():
             print(f"  [eBay] Location filter: {item_location}, Condition: {ebay_condition}")
 
             # 出力目標数を達成するため、余裕を持って検索（処理済みスキップ分を考慮）
-            # ただし検索しすぎないよう上限は10件
-            search_buffer = min(items_per_keyword * 5, 10)
+            # スキップが多いため、目標の10倍まで取得可能に
+            search_buffer = min(items_per_keyword * 10, 60)
             serpapi_results = serpapi_client.search_sold_items(
                 keyword,
                 market=market,
@@ -2614,6 +2614,32 @@ def main():
             # Rate limit protection: wait 2 seconds between items
             # Google Sheets API limit is 60 writes/minute
             import time
+            time.sleep(2)
+
+        # キーワードで有効な出力がなかった場合、サマリー行を記録
+        if items_output_this_keyword == 0:
+            print(f"\n  [INFO] No valid items found for keyword: {keyword}")
+            print(f"         Writing summary row to spreadsheet...")
+
+            # サマリー行を書き込み
+            summary_data = {
+                "keyword": raw_keyword,
+                "category_name": "",
+                "category_id": "",
+                "condition": condition,
+                "sourcing_results": [],
+                "ebay_url": "",
+                "ebay_price_usd": 0,
+                "ebay_shipping_usd": 0,
+                "profit_no_rebate": 0,
+                "profit_margin_no_rebate": 0,
+                "profit_with_rebate": 0,
+                "profit_margin_with_rebate": 0,
+                "error": f"該当商品なし: スキップ{total_skipped}件"
+            }
+            row_num = write_result_to_spreadsheet(sheets_client, summary_data)
+            print(f"  [WRITTEN] Row {row_num} (No valid items for '{keyword}')")
+            total_processed += 1
             time.sleep(2)
 
     # Summary

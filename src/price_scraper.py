@@ -122,6 +122,7 @@ class PriceScraper:
 
                 # 在庫切れで価格が見つからない場合
                 if not in_stock:
+                    print(f"    [Scrape] Rakuten: 在庫切れ検出")
                     return ScrapedPrice(
                         price=0, success=False, error_message="Out of stock",
                         in_stock=False, stock_status="out_of_stock"
@@ -131,7 +132,13 @@ class PriceScraper:
                 if attempt < max_retries - 1:
                     continue
 
-                return ScrapedPrice(price=0, success=False, error_message="Price not found in HTML")
+                # 楽天: 価格が見つからない場合は売り切れとみなす
+                # （売り切れページでは価格表示が消えるパターンが多い）
+                print(f"    [Scrape] Rakuten: 価格なし → 売り切れの可能性大")
+                return ScrapedPrice(
+                    price=0, success=False, error_message="Out of stock (no price)",
+                    in_stock=False, stock_status="out_of_stock"
+                )
 
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:

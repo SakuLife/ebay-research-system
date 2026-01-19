@@ -1039,6 +1039,7 @@ def is_allowed_source_url(url: str) -> bool:
         "/s?k=", "/s/",          # Amazon検索
         "/category/", "/genre/", # カテゴリページ
         "/list/", "/browse/",    # 一覧ページ
+        "/item_list/", "/item_list?",  # 商品一覧ページ（vector-parkなど）
         "/tag/", "/tags/",       # タグページ
     ]
     for pattern in search_page_patterns:
@@ -1815,7 +1816,8 @@ def main():
                     image_analysis = gemini_analyzer.analyze_ebay_item_image(
                         image_url=image_url,
                         ebay_title=ebay_title,
-                        condition=condition
+                        condition=condition,
+                        search_keyword=raw_keyword  # 検索キーワードとの不一致検出用
                     )
                     if image_analysis and image_analysis.should_skip and image_analysis.confidence in ["high", "medium"]:
                         print(f"\n  [SKIP] Gemini image analysis: {image_analysis.skip_reason}")

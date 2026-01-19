@@ -507,7 +507,8 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
         self,
         image_url: str,
         ebay_title: str,
-        condition: str = "New"
+        condition: str = "New",
+        search_keyword: str = ""
     ) -> Optional['ImageAnalysisResult']:
         """
         eBay商品の画像を分析し、仕入れ困難な商品かを判定する.
@@ -519,12 +520,18 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
             image_url: eBay商品画像のURL
             ebay_title: eBay商品タイトル（参考情報）
             condition: 商品コンディション（New/Used）
+            search_keyword: 元の検索キーワード（不一致検出用）
 
         Returns:
             ImageAnalysisResult。失敗時はNone。
         """
         if not self.is_enabled:
             return None
+
+        # 検索キーワード情報を追加
+        keyword_info = ""
+        if search_keyword:
+            keyword_info = f"\n元の検索キーワード: {search_keyword}"
 
         prompt = f'''あなたはeBay商品の仕入れ可否を判定するアシスタントです。
 以下の商品画像とタイトルを見て、日本の大手ECサイト（Amazon、楽天、Yahoo）で
@@ -533,7 +540,7 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
 【商品情報】
 タイトル: {ebay_title}
 コンディション: {condition}
-画像URL: {image_url}
+画像URL: {image_url}{keyword_info}
 
 【スキップすべき商品の例】
 1. トレーディングカード（TCG/CCG）
@@ -556,10 +563,15 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
    - 予約特典、初回特典
    - シリアルナンバー入り
 
+5. キーワードと商品の不一致
+   - 検索キーワードが「ONEPIECE」（アニメ）だが、画像は服のワンピース（ドレス）
+   - 検索キーワードが特定のブランド/作品だが、画像は無関係な商品
+   - キーワードと画像内容が明らかに異なる場合
+
 【出力形式】必ずこの形式で出力:
 SKIP: [YES/NO]
 REASON: [スキップ理由。スキップ不要なら「なし」]
-TYPE: [card/lottery/set/promo/figure/toy/other]
+TYPE: [card/lottery/set/promo/mismatch/figure/toy/other]
 CONFIDENCE: [high/medium/low]
 DETAILS: [画像から読み取った詳細（1行）]
 

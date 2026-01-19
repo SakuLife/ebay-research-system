@@ -1183,6 +1183,10 @@ def is_limited_edition_product(title: str) -> tuple[bool, str]:
         "store exclusive", "event exclusive", "convention exclusive",
         "promo", "promotional", "serial number",  # プロモカード、シリアル番号入り
         "ichiban kuji", "lottery prize", "last one prize", "prize figure",  # 一番くじ系
+        # 日本語一番くじパターン
+        "一番くじ", "いちばんくじ",
+        "a賞", "b賞", "c賞", "d賞", "e賞", "f賞", "g賞", "h賞",
+        "ラストワン賞", "ラストワン",
     ]
 
     for kw in limited_keywords:

@@ -166,6 +166,8 @@ class SerpApiClient:
 
     # 購入不可サイト（商品紹介のみ、通販機能なし）
     NON_PURCHASABLE_DOMAINS = [
+        "imfinityapp.com",       # 空サイト（商品表示なし）
+        "noseencontratron.com",  # 空サイト（商品表示なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
         "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）
         "goodsmile.info",        # グッドスマイルカンパニー公式（直販なし）

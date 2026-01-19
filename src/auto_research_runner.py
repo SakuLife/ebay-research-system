@@ -4,7 +4,7 @@ import argparse
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
@@ -23,6 +23,15 @@ from .models import SourceOffer, ListingCandidate
 from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shopping
 from .gemini_client import GeminiClient, reset_gemini_usage, get_gemini_usage_summary
 from .price_scraper import scrape_price_for_url
+
+
+# 日本時間 (UTC+9)
+JST = timezone(timedelta(hours=9))
+
+
+def now_jst() -> datetime:
+    """現在の日本時間を取得."""
+    return datetime.now(JST)
 
 
 # 価格スクレイピング対象の大手ECサイト
@@ -1476,7 +1485,7 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data = [""] * len(INPUT_SHEET_COLUMNS)
 
     # Map data to columns (24 columns: A-X)
-    row_data[0] = datetime.now().strftime("%Y-%m-%d")  # A: 日付
+    row_data[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付（日本時間）
     row_data[1] = data.get("keyword", "")  # B: キーワード
     row_data[2] = data.get("category_name", "")  # C: カテゴリ
     # カテゴリ番号（そのまま書き込み）
@@ -1513,7 +1522,7 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
         row_data[23] = f"ERROR: {data.get('error')}"  # X: メモ
     else:
         row_data[21] = "要確認"  # V: ステータス
-        row_data[23] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # X: メモ
+        row_data[23] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # X: メモ（日本時間）
     # W: 出品フラグは空（ユーザーが手動で入力）
 
     # Write to specific row (A〜X列：24列)

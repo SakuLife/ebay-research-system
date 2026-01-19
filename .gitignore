@@ -50,6 +50,7 @@ coverage.xml
 
 # Local data and logs
 data/
+logs/
 *.log
 error_*.txt
 

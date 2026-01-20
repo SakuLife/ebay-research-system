@@ -568,10 +568,22 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
    - 検索キーワードが特定のブランド/作品だが、画像は無関係な商品
    - キーワードと画像内容が明らかに異なる場合
 
+6. 初版・ヴィンテージ品（vintage）
+   - "first edition", "1st edition", "初版" の表記
+   - 年代物、絶版品、コレクターズアイテム
+   - 20年以上前の古い商品
+   - 新品で購入不可能な希少品
+
+7. 出品者オリジナルセット（custom_set）
+   - 出品者が独自に複数商品をまとめたセット
+   - 市販のセット商品ではない
+   - 別々に販売されている商品を1つにまとめたもの
+   - 例：「マンガ1巻〜10巻セット」（市販のボックスセットではない）
+
 【出力形式】必ずこの形式で出力:
 SKIP: [YES/NO]
 REASON: [スキップ理由。スキップ不要なら「なし」]
-TYPE: [card/lottery/set/promo/mismatch/figure/toy/other]
+TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/figure/toy/other]
 CONFIDENCE: [high/medium/low]
 DETAILS: [画像から読み取った詳細（1行）]
 
@@ -619,7 +631,7 @@ DETAILS: [画像から読み取った詳細（1行）]
                         skip_reason = ""
                 elif upper_line.startswith('TYPE:'):
                     type_value = line.split(':', 1)[1].strip().lower() if ':' in line else "other"
-                    if type_value in ["card", "lottery", "set", "promo", "figure", "toy", "other"]:
+                    if type_value in ["card", "lottery", "set", "promo", "mismatch", "vintage", "custom_set", "figure", "toy", "other"]:
                         product_type = type_value
                 elif upper_line.startswith('CONFIDENCE:'):
                     conf_value = line.split(':', 1)[1].strip().lower() if ':' in line else "low"

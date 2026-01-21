@@ -365,13 +365,20 @@ class PriceScraper:
                 # 在庫切れの場合、ページ内の関連商品等の価格を誤って取得しないようにする
                 in_stock, stock_status = self._check_amazon_stock(html)
 
-                # 在庫切れの場合は即座に返す（価格抽出をスキップ）
+                # 在庫切れまたは中古のみの場合は即座に返す（価格抽出をスキップ）
                 if not in_stock:
-                    print(f"    [Scrape] Amazon: 在庫切れ検出 → 価格取得スキップ")
-                    return ScrapedPrice(
-                        price=0, success=False, error_message="Out of stock",
-                        in_stock=False, stock_status="out_of_stock"
-                    )
+                    if stock_status == "used_only":
+                        print(f"    [Scrape] Amazon: 新品なし（中古のみ） → 価格取得スキップ")
+                        return ScrapedPrice(
+                            price=0, success=False, error_message="Used only (no new)",
+                            in_stock=False, stock_status="used_only"
+                        )
+                    else:
+                        print(f"    [Scrape] Amazon: 在庫切れ検出 → 価格取得スキップ")
+                        return ScrapedPrice(
+                            price=0, success=False, error_message="Out of stock",
+                            in_stock=False, stock_status="out_of_stock"
+                        )
 
                 price = self._extract_amazon_price(html)
 
@@ -469,6 +476,31 @@ class PriceScraper:
         for pattern in out_of_stock_patterns:
             if re.search(pattern, html, re.IGNORECASE):
                 return (False, "out_of_stock")
+
+        # 「中古品のみ」パターン（新品なし）
+        # 新品価格がなく、中古品の表示がある場合
+        used_only_patterns = [
+            r"中古品[ー\-−]",        # 「中古品ー可」「中古品-良い」など
+            r"中古品の出品",
+            r"Used.*from",
+            r"件の中古品",
+            r"中古商品",
+        ]
+        has_used = any(re.search(p, html, re.IGNORECASE) for p in used_only_patterns)
+
+        # 新品価格の表示がない場合をチェック
+        new_price_patterns = [
+            r"新品.*¥[\d,]+",
+            r"新品.*￥[\d,]+",
+            r'id="priceblock_ourprice"',
+            r'id="corePrice_feature_div".*?¥[\d,]+',
+            r'"priceAmount":\s*"[\d,]+"',
+        ]
+        has_new_price = any(re.search(p, html, re.IGNORECASE | re.DOTALL) for p in new_price_patterns)
+
+        # 中古品表示があり、新品価格がない場合
+        if has_used and not has_new_price:
+            return (False, "used_only")
 
         # 在庫ありパターン
         in_stock_patterns = [

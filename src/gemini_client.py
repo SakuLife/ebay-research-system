@@ -580,10 +580,18 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
    - 別々に販売されている商品を1つにまとめたもの
    - 例：「マンガ1巻〜10巻セット」（市販のボックスセットではない）
 
+8. アニメ制作素材（production）
+   - セル画（Animation Cel）
+   - 原画、動画、背景画
+   - 制作資料、設定資料
+   - アニメ制作に使われた一点物
+   - "cel", "animation art", "production art" の表記
+   - 手描きのアニメ素材
+
 【出力形式】必ずこの形式で出力:
 SKIP: [YES/NO]
 REASON: [スキップ理由。スキップ不要なら「なし」]
-TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/figure/toy/other]
+TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/production/figure/toy/other]
 CONFIDENCE: [high/medium/low]
 DETAILS: [画像から読み取った詳細（1行）]
 
@@ -631,7 +639,7 @@ DETAILS: [画像から読み取った詳細（1行）]
                         skip_reason = ""
                 elif upper_line.startswith('TYPE:'):
                     type_value = line.split(':', 1)[1].strip().lower() if ':' in line else "other"
-                    if type_value in ["card", "lottery", "set", "promo", "mismatch", "vintage", "custom_set", "figure", "toy", "other"]:
+                    if type_value in ["card", "lottery", "set", "promo", "mismatch", "vintage", "custom_set", "production", "figure", "toy", "other"]:
                         product_type = type_value
                 elif upper_line.startswith('CONFIDENCE:'):
                     conf_value = line.split(':', 1)[1].strip().lower() if ':' in line else "low"

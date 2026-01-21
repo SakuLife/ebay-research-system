@@ -1325,6 +1325,10 @@ def find_top_matching_sources(
             category_excluded += 1
             continue
 
+        # 在庫切れ・中古のみは除外（Step 2/3へフォールバックするため）
+        if not source.in_stock or source.stock_status in ["out_of_stock", "used_only"]:
+            continue
+
         # 価格の有無を判定
         has_price = source.source_price_jpy > 0
         is_major_ec = any(domain in source.source_url for domain in MAJOR_EC_DOMAINS)
@@ -1933,10 +1937,16 @@ def main():
                     MIN_IMAGE_SIMILARITY = 0.25  # 画像検索の類似度閾値
 
                     # カテゴリベースの除外チェックも適用
+                    # 在庫切れ・中古のみの商品も除外
                     valid_sources = []
                     category_excluded_count = 0
+                    stock_excluded_count = 0
                     for src, sim, _, _, total in scored_sources:
                         if sim < MIN_IMAGE_SIMILARITY:
+                            continue
+                        # 在庫切れ・中古のみを除外（Step 2/3へフォールバック）
+                        if not src.in_stock or src.stock_status in ["out_of_stock", "used_only"]:
+                            stock_excluded_count += 1
                             continue
                         # カテゴリ除外チェック（Plushなのに本/雑誌など）
                         should_exclude, _ = check_category_exclusion(src.title, category_name)
@@ -1945,8 +1955,8 @@ def main():
                             continue
                         valid_sources.append((src, sim, total))
 
-                    if category_excluded_count > 0:
-                        print(f"    (カテゴリ除外: {category_excluded_count}件)")
+                    if category_excluded_count > 0 or stock_excluded_count > 0:
+                        print(f"    (カテゴリ除外: {category_excluded_count}件, 在庫なし除外: {stock_excluded_count}件)")
 
                     if valid_sources:
                         # スコア順にソートして上位3件を取得

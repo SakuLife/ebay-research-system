@@ -154,6 +154,13 @@ class SerpApiClient:
         "suruga-ya.jp",     # 駿河屋（中古メイン）
         "mandarake",        # まんだらけ
         "lashinbang",       # らしんばん
+        # 中古ゴルフクラブ専門店
+        "golfdo.com",       # ゴルフドゥ（中古専門）
+        "golfkids.jp",      # ゴルフキッズ（中古専門）
+        "golfeffort.com",   # ゴルフエフォート（中古専門）
+        "golfpartner.co.jp",  # ゴルフパートナー（中古クラブ店）
+        "golfpartner.jp",   # ゴルフパートナー
+        "usedgolf",         # 中古ゴルフ系
     ]
 
     # 除外すべきサイト（検索結果に出てきても無視）

@@ -1128,6 +1128,8 @@ def is_valid_source_for_condition(source_site: str, source_url: str, condition: 
         "fril", "ラクマ",
         "magi",
         "2ndstreet", "セカスト",
+        # 中古ゴルフクラブ専門店
+        "golfdo.com", "golfkids", "golfeffort", "golfpartner",
     ]
 
     for pattern in used_patterns:

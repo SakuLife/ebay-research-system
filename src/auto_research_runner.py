@@ -1273,7 +1273,8 @@ def find_top_matching_sources(
     prefer_sourcing: bool = True,
     require_price: bool = True,
     top_n: int = 3,
-    category_name: str = ""
+    category_name: str = "",
+    condition: str = "New"
 ) -> List[RankedSource]:
     """
     eBayタイトルにマッチする仕入先をスコア順に最大N件返す.
@@ -1283,6 +1284,7 @@ def find_top_matching_sources(
     - 類似度は足切りではなく、スコアの一部として使用
     - 価格がある候補を価格不明より優先
     - 類似度が極端に低い（<5%）場合のみ除外
+    - New条件時、中古品（conditionスコア0.5未満）は除外
 
     Args:
         ebay_title: eBayの商品タイトル
@@ -1292,6 +1294,7 @@ def find_top_matching_sources(
         require_price: 価格が必須かどうか（Trueなら価格0円は除外）
         top_n: 返す件数（デフォルト3）
         category_name: eBayのカテゴリ名（カテゴリベース除外に使用）
+        condition: eBayの商品状態（"New" or "Used"）
 
     Returns:
         RankedSourceのリスト（スコア降順）
@@ -1303,6 +1306,7 @@ def find_top_matching_sources(
     excluded_urls = 0
     category_excluded = 0
     low_similarity_excluded = 0
+    used_excluded = 0  # 中古品除外カウント
     seen_urls = set()  # 重複URL除外用
 
     MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
@@ -1350,6 +1354,12 @@ def find_top_matching_sources(
         # conditionスコア
         condition_score = calculate_condition_score(source.title, source.source_site)
 
+        # New条件時、中古品（conditionスコア0.5未満）は除外
+        # 「中古」「美品」「Aランク」等が含まれる場合、スコアは0.3程度になる
+        if condition == "New" and condition_score < 0.5:
+            used_excluded += 1
+            continue
+
         # 仕入れ優先度
         priority = calculate_source_priority(source.source_site) if prefer_sourcing else 1.0
 
@@ -1386,7 +1396,7 @@ def find_top_matching_sources(
             priority=priority
         ))
 
-    if excluded_urls > 0 or category_excluded > 0 or low_similarity_excluded > 0:
+    if excluded_urls > 0 or category_excluded > 0 or low_similarity_excluded > 0 or used_excluded > 0:
         parts = []
         if excluded_urls > 0:
             parts.append(f"海外/PDF除外: {excluded_urls}件")
@@ -1394,6 +1404,8 @@ def find_top_matching_sources(
             parts.append(f"カテゴリ除外: {category_excluded}件")
         if low_similarity_excluded > 0:
             parts.append(f"低類似度除外: {low_similarity_excluded}件")
+        if used_excluded > 0:
+            parts.append(f"中古品除外: {used_excluded}件")
         print(f"    ({', '.join(parts)})")
 
     # スコア降順でソートして上位N件を返す
@@ -1938,9 +1950,11 @@ def main():
 
                     # カテゴリベースの除外チェックも適用
                     # 在庫切れ・中古のみの商品も除外
+                    # New条件時、中古品も除外
                     valid_sources = []
                     category_excluded_count = 0
                     stock_excluded_count = 0
+                    used_excluded_count = 0
                     for src, sim, _, _, total in scored_sources:
                         if sim < MIN_IMAGE_SIMILARITY:
                             continue
@@ -1948,6 +1962,12 @@ def main():
                         if not src.in_stock or src.stock_status in ["out_of_stock", "used_only"]:
                             stock_excluded_count += 1
                             continue
+                        # New条件時、タイトルに中古キーワードがある商品を除外
+                        if condition == "New":
+                            cond_score = calculate_condition_score(src.title, src.source_site)
+                            if cond_score < 0.5:
+                                used_excluded_count += 1
+                                continue
                         # カテゴリ除外チェック（Plushなのに本/雑誌など）
                         should_exclude, _ = check_category_exclusion(src.title, category_name)
                         if should_exclude:
@@ -1955,8 +1975,8 @@ def main():
                             continue
                         valid_sources.append((src, sim, total))
 
-                    if category_excluded_count > 0 or stock_excluded_count > 0:
-                        print(f"    (カテゴリ除外: {category_excluded_count}件, 在庫なし除外: {stock_excluded_count}件)")
+                    if category_excluded_count > 0 or stock_excluded_count > 0 or used_excluded_count > 0:
+                        print(f"    (カテゴリ除外: {category_excluded_count}件, 在庫なし除外: {stock_excluded_count}件, 中古品除外: {used_excluded_count}件)")
 
                     if valid_sources:
                         # スコア順にソートして上位3件を取得
@@ -2092,7 +2112,7 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name)
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name, condition=condition)
                     if top_sources:
                         best_source = top_sources[0].source
                         search_method = "英語検索"
@@ -2232,7 +2252,7 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name)
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name, condition=condition)
                     if top_sources:
                         best_source = top_sources[0].source
                         search_method = "日本語検索"

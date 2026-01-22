@@ -984,16 +984,32 @@ EXCLUDED_URL_PATTERNS = [
     "/character/",    # Disney Store キャラクターページ
     "?prefn",         # Disney Store フィルター
     "?prefv",         # Disney Store フィルター
-    # ブログ・まとめサイト（仕入れ不可）
+    # ブログ・まとめサイト・ニュースサイト（仕入れ不可）
     "infotvlive.net",
     "matome.naver.jp",
     "togetter.com",
     "note.com",
     "ameblo.jp",
-    # 価格比較サイト（仕入れ不可）
+    "watch.impress.co.jp",  # ニュースサイト
+    "gigazine.net",
+    "itmedia.co.jp",
+    "gizmodo.jp",
+    "engadget.com",
+    "4gamer.net",
+    "famitsu.com/news/",    # ニュース記事
+    "dengekionline.com",
+    # 価格比較・相場サイト（仕入れ不可、購入不可）
     "kakaku.com",
     "price.com",
     "bestgate.net",
+    "aucfan.com",           # オークション相場サイト
+    "オークファン",
+    "pricetar.com",
+    # 口コミ・レビューページ（商品ページではない）
+    "/community/",          # ヨドバシ等の口コミページ
+    "/review/",
+    "/reviews/",
+    "/user-review/",
     # 電子書籍・Kindle（物理的な商品ではない）
     "/ebook/",
     "-ebook/",

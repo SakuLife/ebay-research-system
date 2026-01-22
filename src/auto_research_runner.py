@@ -22,7 +22,7 @@ from .weight_estimator import estimate_weight_from_title, detect_product_type
 from .models import SourceOffer, ListingCandidate
 from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shopping
 from .gemini_client import GeminiClient, reset_gemini_usage, get_gemini_usage_summary
-from .price_scraper import scrape_price_for_url
+from .price_scraper import scrape_price_for_url, scrape_price_with_fallback
 
 
 # 日本時間 (UTC+9)
@@ -139,7 +139,8 @@ def try_scrape_zero_price_items(sources: list, max_scrape: int = 5) -> int:
         attempted += 1
         print(f"    [Scrape] {source.source_site}: 価格0円 → スクレイピング中...")
 
-        scraped = scrape_price_for_url(source.source_url)
+        # 通常スクレイピング + Headlessフォールバック
+        scraped = scrape_price_with_fallback(source.source_url, source.source_price_jpy)
 
         # 在庫ステータスを更新
         source.in_stock = scraped.in_stock
@@ -2322,7 +2323,8 @@ def main():
                     if need_scrape:
                         scrape_reason = "価格0円" if src_price <= 0 else "在庫チェック"
                         print(f"    [{rank}位] {src.source_site} - {scrape_reason}、スクレイピング中...")
-                        scraped = scrape_price_for_url(src.source_url)
+                        # 通常スクレイピング + Headlessフォールバック
+                        scraped = scrape_price_with_fallback(src.source_url, src_price)
 
                         # 在庫ステータスを更新
                         src.in_stock = scraped.in_stock

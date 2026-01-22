@@ -768,3 +768,235 @@ def scrape_price_for_url(url: str) -> ScrapedPrice:
         ScrapedPrice: スクレイピング結果
     """
     return get_scraper().scrape_price(url)
+
+
+# === Headless Browser Fallback ===
+
+class HeadlessPriceScraper:
+    """
+    Playwrightを使用したheadlessブラウザでの価格取得.
+
+    通常のスクレイピングで価格が取れない場合のフォールバック用.
+    JavaScriptで動的に表示される割引価格等を取得可能.
+    """
+
+    def __init__(self):
+        self._browser = None
+        self._playwright = None
+
+    def _ensure_browser(self):
+        """ブラウザを起動（遅延初期化）."""
+        if self._browser is None:
+            try:
+                from playwright.sync_api import sync_playwright
+                self._playwright = sync_playwright().start()
+                self._browser = self._playwright.chromium.launch(headless=True)
+            except Exception as e:
+                print(f"    [Headless] Failed to start browser: {e}")
+                raise
+
+    def close(self):
+        """ブラウザを終了."""
+        if self._browser:
+            self._browser.close()
+            self._browser = None
+        if self._playwright:
+            self._playwright.stop()
+            self._playwright = None
+
+    def scrape_price_headless(self, url: str) -> ScrapedPrice:
+        """
+        Headlessブラウザでページを開いて価格を取得する.
+
+        Args:
+            url: 商品ページURL
+
+        Returns:
+            ScrapedPrice: スクレイピング結果
+        """
+        if not url:
+            return ScrapedPrice(price=0, success=False, error_message="URL is empty")
+
+        try:
+            print(f"    [Headless] Starting browser...")
+            self._ensure_browser()
+
+            page = self._browser.new_page()
+            page.set_default_timeout(15000)  # 15秒タイムアウト
+
+            print(f"    [Headless] Navigating to page...")
+            page.goto(url, wait_until="domcontentloaded")
+
+            # ページが安定するまで少し待つ
+            page.wait_for_timeout(2000)
+
+            # 価格を抽出
+            price = self._extract_price_from_page(page, url)
+
+            # 在庫状況をチェック
+            in_stock, stock_status = self._check_stock_from_page(page)
+
+            page.close()
+
+            if price > 0:
+                stock_msg = " (在庫切れ)" if not in_stock else ""
+                print(f"    [Headless] Price found: JPY {price:,.0f}{stock_msg}")
+                return ScrapedPrice(
+                    price=price, currency="JPY", source="Headless",
+                    success=True, in_stock=in_stock, stock_status=stock_status
+                )
+
+            if not in_stock:
+                return ScrapedPrice(
+                    price=0, success=False, error_message="Out of stock",
+                    in_stock=False, stock_status="out_of_stock"
+                )
+
+            return ScrapedPrice(price=0, success=False, error_message="Price not found")
+
+        except Exception as e:
+            print(f"    [Headless] Error: {e}")
+            return ScrapedPrice(price=0, success=False, error_message=f"Headless error: {str(e)[:50]}")
+
+    def _extract_price_from_page(self, page, url: str) -> float:
+        """ページから価格を抽出."""
+        prices_found = []
+
+        # 汎用的な価格セレクタ
+        price_selectors = [
+            # 一般的な価格表示
+            '[class*="price"]',
+            '[class*="Price"]',
+            '[id*="price"]',
+            '[id*="Price"]',
+            '[data-price]',
+            # 楽天
+            '.price2',
+            '.price--OX_YW',
+            '.item-price',
+            # Amazon
+            '.a-price-whole',
+            '#priceblock_ourprice',
+            '#corePrice_feature_div .a-offscreen',
+            # Yahoo
+            '[class*="ItemPrice"]',
+            '[class*="elPrice"]',
+            # その他
+            '.product-price',
+            '.sale-price',
+            '.current-price',
+        ]
+
+        for selector in price_selectors:
+            try:
+                elements = page.query_selector_all(selector)
+                for elem in elements:
+                    text = elem.inner_text() or ""
+                    # data-price属性もチェック
+                    data_price = elem.get_attribute("data-price")
+                    if data_price:
+                        try:
+                            price = float(data_price.replace(',', ''))
+                            if 100 <= price <= 10000000:
+                                prices_found.append(price)
+                        except:
+                            pass
+
+                    # テキストから価格を抽出
+                    match = re.search(r'[¥￥]?\s*([\d,]+)\s*円?', text)
+                    if match:
+                        try:
+                            price = float(match.group(1).replace(',', ''))
+                            if 100 <= price <= 10000000:
+                                prices_found.append(price)
+                        except:
+                            pass
+            except:
+                continue
+
+        # 最安値を返す（割引価格を優先）
+        if prices_found:
+            return min(prices_found)
+
+        return 0
+
+    def _check_stock_from_page(self, page) -> tuple:
+        """ページから在庫状況を確認."""
+        try:
+            html = page.content()
+
+            out_of_stock_patterns = [
+                "在庫切れ", "売り切れ", "品切れ", "完売",
+                "sold out", "soldout", "out of stock",
+                "販売終了", "取り扱い終了"
+            ]
+
+            for pattern in out_of_stock_patterns:
+                if pattern.lower() in html.lower():
+                    return (False, "out_of_stock")
+
+            in_stock_patterns = [
+                "在庫あり", "カートに入れる", "今すぐ購入", "購入する"
+            ]
+
+            for pattern in in_stock_patterns:
+                if pattern in html:
+                    return (True, "in_stock")
+
+            return (True, "unknown")
+        except:
+            return (True, "unknown")
+
+
+# Headlessスクレイパーのシングルトン
+_headless_scraper: Optional[HeadlessPriceScraper] = None
+
+
+def get_headless_scraper() -> HeadlessPriceScraper:
+    """HeadlessPriceScraperのシングルトンインスタンスを取得."""
+    global _headless_scraper
+    if _headless_scraper is None:
+        _headless_scraper = HeadlessPriceScraper()
+    return _headless_scraper
+
+
+def scrape_price_with_fallback(url: str, current_price: float = 0) -> ScrapedPrice:
+    """
+    価格をスクレイピングで取得（Headlessフォールバック付き）.
+
+    通常のスクレイピングで価格が0または異常値の場合、
+    Headlessブラウザで再取得を試みる.
+
+    Args:
+        url: 商品ページURL
+        current_price: 現在の価格（0または異常値の場合にフォールバック）
+
+    Returns:
+        ScrapedPrice: スクレイピング結果
+    """
+    # 価格が正常な場合はそのまま返す
+    if 100 <= current_price <= 10000000:
+        return ScrapedPrice(price=current_price, success=True)
+
+    # まず通常のスクレイピングを試す
+    result = scrape_price_for_url(url)
+
+    # 価格が取得できたら返す
+    if result.success and 100 <= result.price <= 10000000:
+        return result
+
+    # 在庫切れの場合はHeadless不要
+    if not result.in_stock:
+        return result
+
+    # Headlessフォールバック
+    print(f"    [Fallback] Trying headless browser...")
+    try:
+        headless_result = get_headless_scraper().scrape_price_headless(url)
+        if headless_result.success and headless_result.price > 0:
+            return headless_result
+    except Exception as e:
+        print(f"    [Fallback] Headless failed: {e}")
+
+    # どちらも失敗した場合は元の結果を返す
+    return result

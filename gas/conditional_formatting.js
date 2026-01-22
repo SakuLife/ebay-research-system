@@ -73,6 +73,7 @@ function setupConditionalFormatting() {
 
 /**
  * ステータス列にプルダウンを設定する
+ * 古いT列のドロップダウンも削除する
  */
 function setupStatusDropdown() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -82,6 +83,11 @@ function setupStatusDropdown() {
     Logger.log("入力シートが見つかりません");
     return;
   }
+
+  // 古いT列のドロップダウンを削除（列構造変更前の名残）
+  const oldRange = sheet.getRange("T2:T1000");
+  oldRange.clearDataValidations();
+  Logger.log("T列の古いドロップダウンを削除しました");
 
   // ステータス列 = V列、2行目から1000行目
   const statusRange = sheet.getRange("V2:V1000");
@@ -96,7 +102,7 @@ function setupStatusDropdown() {
 
   statusRange.setDataValidation(rule);
 
-  Logger.log("ステータス列にプルダウンを設定しました");
+  Logger.log("ステータス列(V列)にプルダウンを設定しました");
   Logger.log("選択肢: " + statusOptions.join(", "));
 }
 

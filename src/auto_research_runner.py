@@ -2499,10 +2499,10 @@ def main():
                             print(f"    問題: {', '.join(validation.issues)}")
 
                         if validation.suggestion == "skip":
-                            # この商品自体をスキップ
-                            print(f"  [Gemini検証] → スキップ")
-                            error_reason = f"Gemini検証NG: {validation.reason[:30]}"
-                            best_source = None
+                            # 利益計算は実行するが、警告として記録
+                            print(f"  [Gemini検証] → 要確認（利益計算は実行）")
+                            error_reason = f"要確認: {validation.reason[:25]}"
+                            # best_source は保持して利益計算を続行
                         elif validation.suggestion == "retry":
                             # 次の候補を試す（現在は簡易版なのでスキップ扱い）
                             # TODO: working_candidatesの2番目以降を試すロジック
@@ -2515,9 +2515,9 @@ def main():
                                 similarity = next_candidate["ranked_src"].similarity
                                 print(f"  [RETRY] {best_source.source_site} - JPY {total_source_price:.0f}")
                             else:
-                                print(f"  [Gemini検証] → 他の候補なし、スキップ")
-                                error_reason = f"Gemini検証NG: {validation.reason[:30]}"
-                                best_source = None
+                                print(f"  [Gemini検証] → 他の候補なし、要確認（利益計算は実行）")
+                                error_reason = f"要確認: {validation.reason[:25]}"
+                                # best_source は保持して利益計算を続行
                         # accept の場合はそのまま進む
 
             # === 在庫確認: 非大手ECサイトの場合のみ ===

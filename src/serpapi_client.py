@@ -446,9 +446,19 @@ class SerpApiClient:
                         raw_price = price_info.get("raw", "")
                     elif isinstance(price_info, str):
                         # Try to extract number from string like "¥1,234"
+                        # Note: Don't remove commas before search to avoid merging multiple prices
                         import re
-                        match = re.search(r'[\d,]+', price_info.replace(',', ''))
-                        price = float(match.group().replace(',', '')) if match else 0
+                        # Search for price pattern (digits with optional commas, max 7 digits)
+                        match = re.search(r'[\d,]{1,9}', price_info)
+                        if match:
+                            price_str = match.group().replace(',', '')
+                            # Sanity check: price should be reasonable (max 10 million yen)
+                            if len(price_str) <= 8:
+                                price = float(price_str)
+                            else:
+                                price = 0
+                        else:
+                            price = 0
                         raw_price = price_info
                     else:
                         price = 0
@@ -459,9 +469,13 @@ class SerpApiClient:
                         raw = item.get("price", {}).get("raw", "")
                         if raw:
                             import re
-                            match = re.search(r'[\d,]+', raw.replace(',', ''))
+                            # Search for price pattern (digits with optional commas, limited length)
+                            match = re.search(r'[\d,]{1,9}', raw)
                             if match:
-                                price = float(match.group().replace(',', ''))
+                                price_str = match.group().replace(',', '')
+                                # Sanity check: price should be reasonable (max 10 million yen)
+                                if len(price_str) <= 8:
+                                    price = float(price_str)
 
                     # Also check extracted_price
                     if price == 0:

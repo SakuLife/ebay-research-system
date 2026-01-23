@@ -175,6 +175,9 @@ class SerpApiClient:
     NON_PURCHASABLE_DOMAINS = [
         "imfinityapp.com",       # 空サイト（商品表示なし）
         "noseencontratron.com",  # 空サイト（商品表示なし）
+        "hinkalihachapuri.com",  # スパム/偽ECサイト（商品一覧ページのみ）
+        "shanthinethralaya.com", # 海外スパムサイト（商品なし）
+        "audio-st.jp",           # オーディオ買取実績ページ（販売なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
         "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）
         "goodsmile.info",        # グッドスマイルカンパニー公式（直販なし）
@@ -1089,14 +1092,29 @@ class SerpApiClient:
                             price = float(match.group().replace(',', ''))
 
                     # price_info がない場合、タイトルから価格を抽出
+                    # ただし割引・クーポン金額は除外
                     if price == 0:
+                        # まず割引パターンを除去したタイトルで検索
+                        # "7,000円引き", "7000円OFF", "7,000円クーポン" などを除外
+                        discount_patterns = [
+                            r'[\d,]+\s*円\s*引き',
+                            r'[\d,]+\s*円\s*OFF',
+                            r'[\d,]+\s*円\s*off',
+                            r'[\d,]+\s*円\s*クーポン',
+                            r'[\d,]+\s*円\s*ポイント',
+                            r'最大\s*[\d,]+\s*円',
+                        ]
+                        clean_title = title
+                        for dp in discount_patterns:
+                            clean_title = re.sub(dp, '', clean_title)
+
                         price_patterns = [
                             r'[¥￥]\s*([\d,]+)\s*円',
                             r'([\d,]+)\s*円',
                             r'[¥￥]\s*([\d,]+)',
                         ]
                         for pattern in price_patterns:
-                            match = re.search(pattern, title)
+                            match = re.search(pattern, clean_title)
                             if match:
                                 extracted = float(match.group(1).replace(',', ''))
                                 if extracted >= 100:
@@ -1221,6 +1239,19 @@ class SerpApiClient:
 
                     text_to_search = f"{title} {snippet} {rich_text}"
 
+                    # 割引・クーポン金額を先に除去
+                    discount_patterns = [
+                        r'[\d,]+\s*円\s*引き',
+                        r'[\d,]+\s*円\s*OFF',
+                        r'[\d,]+\s*円\s*off',
+                        r'[\d,]+\s*円\s*クーポン',
+                        r'[\d,]+\s*円\s*ポイント',
+                        r'最大\s*[\d,]+\s*円',
+                    ]
+                    clean_text = text_to_search
+                    for dp in discount_patterns:
+                        clean_text = re.sub(dp, '', clean_text)
+
                     # 複数の価格パターンを試す
                     price_patterns = [
                         r'[¥￥]\s*([\d,]+)\s*円',      # ¥1,234円
@@ -1231,7 +1262,7 @@ class SerpApiClient:
                     ]
 
                     for pattern in price_patterns:
-                        price_match = re.search(pattern, text_to_search)
+                        price_match = re.search(pattern, clean_text)
                         if price_match:
                             price = float(price_match.group(1).replace(',', ''))
                             if price >= 100:  # 100円以上のみ有効

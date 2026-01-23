@@ -317,7 +317,8 @@ class SerpApiClient:
             print(f"  [SerpApi] Found {len(organic)} sold items")
 
             sold_items = []
-            for item in organic[:max_results]:
+            seen_item_ids = set()  # 重複item_id除外用
+            for item in organic[:max_results * 2]:  # 重複除外分を考慮して多めに取得
                 try:
                     title = item.get("title", "")
                     link = item.get("link", "")
@@ -329,6 +330,16 @@ class SerpApiClient:
                         match = re.search(r'/itm/(\d+)', link)
                         if match:
                             item_id = match.group(1)
+
+                    # 重複item_idをスキップ（同一商品の複数落札を除外）
+                    if item_id and item_id in seen_item_ids:
+                        continue
+                    if item_id:
+                        seen_item_ids.add(item_id)
+
+                    # max_results件に達したら終了
+                    if len(sold_items) >= max_results:
+                        break
 
                     # Parse price
                     price_info = item.get("price", {})

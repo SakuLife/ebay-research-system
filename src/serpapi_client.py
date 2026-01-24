@@ -180,6 +180,7 @@ class SerpApiClient:
         "themarinaatroweswharf.com",  # 海外スパム/ブログサイト
         "sgs109.com",            # 商品紹介ページ（購入不可）
         "saleflatet.click",      # スパム/偽ECサイト（商品一覧のみ）
+        "shobanarealty.com",     # 不動産サイト（ECサイトではない）
         "audio-st.jp",           # オーディオ買取実績ページ（販売なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
         "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）

@@ -177,6 +177,7 @@ class SerpApiClient:
         "noseencontratron.com",  # 空サイト（商品表示なし）
         "hinkalihachapuri.com",  # スパム/偽ECサイト（商品一覧ページのみ）
         "shanthinethralaya.com", # 海外スパムサイト（商品なし）
+        "themarinaatroweswharf.com",  # 海外スパム/ブログサイト
         "audio-st.jp",           # オーディオ買取実績ページ（販売なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
         "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）
@@ -941,7 +942,7 @@ class SerpApiClient:
             if any(domain in url_lower for domain in self.FLEA_MARKET_DOMAINS):
                 return True
 
-            # URLパスに中古を示すパターンが含まれる場合も除外
+            # URLパスに中古・アウトレットを示すパターンが含まれる場合も除外
             # 例: shop.golfdigest.co.jp/used/ → 中古品ページ
             used_path_patterns = [
                 "/used/",           # 中古品カテゴリ（GDO等）
@@ -949,6 +950,8 @@ class SerpApiClient:
                 "/secondhand/",     # セカンドハンド
                 "/pre-owned/",      # 認定中古
                 "/refurbished/",    # リファービッシュ
+                "/outlet/",         # アウトレット品
+                "condition=used",   # Amazon等の中古品パラメータ
             ]
             if any(pattern in url_lower for pattern in used_path_patterns):
                 return True

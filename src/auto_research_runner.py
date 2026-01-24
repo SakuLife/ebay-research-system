@@ -1137,7 +1137,7 @@ def is_valid_source_for_condition(source_site: str, source_url: str, condition: 
         if pattern in site_lower or pattern in url_lower:
             return False
 
-    # URLパスに中古を示すパターンが含まれる場合も除外
+    # URLパスに中古・アウトレットを示すパターンが含まれる場合も除外
     # 例: shop.golfdigest.co.jp/used/ → 中古品ページ
     used_path_patterns = [
         "/used/",           # 中古品カテゴリ（GDO等）
@@ -1145,6 +1145,8 @@ def is_valid_source_for_condition(source_site: str, source_url: str, condition: 
         "/secondhand/",     # セカンドハンド
         "/pre-owned/",      # 認定中古
         "/refurbished/",    # リファービッシュ
+        "/outlet/",         # アウトレット品
+        "condition=used",   # Amazon等の中古品パラメータ
     ]
     if any(pattern in url_lower for pattern in used_path_patterns):
         return False
@@ -1175,6 +1177,8 @@ def calculate_condition_score(title: str, source_site: str) -> float:
     # 中古系キーワード（減点）
     used_keywords = [
         "中古", "used", "難あり", "ジャンク", "訳あり", "傷あり", "プレイ用",
+        # アウトレット・展示品
+        "アウトレット", "outlet", "展示品", "展示処分", "店頭展示",
         # カード向け中古キーワード
         "美品", "極美品", "良品", "並品",
         "psa", "bgs", "cgc", "graded",  # グレーディング済み = 中古

@@ -1137,6 +1137,18 @@ def is_valid_source_for_condition(source_site: str, source_url: str, condition: 
         if pattern in site_lower or pattern in url_lower:
             return False
 
+    # URLパスに中古を示すパターンが含まれる場合も除外
+    # 例: shop.golfdigest.co.jp/used/ → 中古品ページ
+    used_path_patterns = [
+        "/used/",           # 中古品カテゴリ（GDO等）
+        "/useditems/",      # 中古品アイテム
+        "/secondhand/",     # セカンドハンド
+        "/pre-owned/",      # 認定中古
+        "/refurbished/",    # リファービッシュ
+    ]
+    if any(pattern in url_lower for pattern in used_path_patterns):
+        return False
+
     return True
 
 

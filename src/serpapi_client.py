@@ -941,6 +941,18 @@ class SerpApiClient:
             if any(domain in url_lower for domain in self.FLEA_MARKET_DOMAINS):
                 return True
 
+            # URLパスに中古を示すパターンが含まれる場合も除外
+            # 例: shop.golfdigest.co.jp/used/ → 中古品ページ
+            used_path_patterns = [
+                "/used/",           # 中古品カテゴリ（GDO等）
+                "/useditems/",      # 中古品アイテム
+                "/secondhand/",     # セカンドハンド
+                "/pre-owned/",      # 認定中古
+                "/refurbished/",    # リファービッシュ
+            ]
+            if any(pattern in url_lower for pattern in used_path_patterns):
+                return True
+
         return False
 
     def _extract_source_name(self, url: str) -> str:

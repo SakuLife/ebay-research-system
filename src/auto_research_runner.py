@@ -1563,8 +1563,11 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
 
     # eBay情報
     row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
-    row_data[15] = str(data.get("ebay_price", ""))  # P: 販売価格（米ドル）
-    row_data[16] = str(data.get("ebay_shipping", ""))  # Q: 販売送料（米ドル）
+    # 販売価格・送料は小数第1位までにフォーマット
+    ebay_price = data.get("ebay_price", "")
+    ebay_shipping = data.get("ebay_shipping", "")
+    row_data[15] = f"{float(ebay_price):.1f}" if ebay_price else ""  # P: 販売価格（米ドル）
+    row_data[16] = f"{float(ebay_shipping):.1f}" if ebay_shipping else ""  # Q: 販売送料（米ドル）
 
     # 利益計算結果
     row_data[17] = str(data.get("profit_no_rebate", ""))  # R: 還付抜き利益額（円）
@@ -2519,7 +2522,7 @@ def main():
                         if validation.suggestion == "skip":
                             # 利益計算は実行するが、警告として記録
                             print(f"  [Gemini検証] → 要確認（利益計算は実行）")
-                            error_reason = f"要確認: {validation.reason[:25]}"
+                            error_reason = f"要確認: {validation.reason[:60]}"
                             # best_source は保持して利益計算を続行
                         elif validation.suggestion == "retry":
                             # 次の候補を試す（現在は簡易版なのでスキップ扱い）
@@ -2534,7 +2537,7 @@ def main():
                                 print(f"  [RETRY] {best_source.source_site} - JPY {total_source_price:.0f}")
                             else:
                                 print(f"  [Gemini検証] → 他の候補なし、要確認（利益計算は実行）")
-                                error_reason = f"要確認: {validation.reason[:25]}"
+                                error_reason = f"要確認: {validation.reason[:60]}"
                                 # best_source は保持して利益計算を続行
                         # accept の場合はそのまま進む
 

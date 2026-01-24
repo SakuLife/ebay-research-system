@@ -154,6 +154,9 @@ class SerpApiClient:
         "suruga-ya.jp",     # 駿河屋（中古メイン）
         "mandarake",        # まんだらけ
         "lashinbang",       # らしんばん
+        "komehyo.jp",       # コメ兵（ブランド中古品）
+        "brandoff",         # ブランドオフ
+        "brand-revalue",    # ブランドリバリュー
         # 中古ゴルフクラブ専門店
         "golfdo.com",       # ゴルフドゥ（中古専門）
         "golfkids.jp",      # ゴルフキッズ（中古専門）

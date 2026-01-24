@@ -1563,11 +1563,11 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
 
     # eBay情報
     row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
-    # 販売価格・送料は小数第1位までにフォーマット
-    ebay_price = data.get("ebay_price", "")
-    ebay_shipping = data.get("ebay_shipping", "")
-    row_data[15] = f"{float(ebay_price):.1f}" if ebay_price else ""  # P: 販売価格（米ドル）
-    row_data[16] = f"{float(ebay_shipping):.1f}" if ebay_shipping else ""  # Q: 販売送料（米ドル）
+    # 販売価格・送料は小数第1位までにフォーマット（0も有効な値として扱う）
+    ebay_price = data.get("ebay_price")
+    ebay_shipping = data.get("ebay_shipping")
+    row_data[15] = f"{float(ebay_price):.1f}" if ebay_price is not None and ebay_price != "" else ""  # P: 販売価格
+    row_data[16] = f"{float(ebay_shipping):.1f}" if ebay_shipping is not None and ebay_shipping != "" else ""  # Q: 送料
 
     # 利益計算結果
     row_data[17] = str(data.get("profit_no_rebate", ""))  # R: 還付抜き利益額（円）

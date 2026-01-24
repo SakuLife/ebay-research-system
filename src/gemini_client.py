@@ -586,10 +586,18 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
    - "cel", "animation art", "production art" の表記
    - 手描きのアニメ素材
 
+9. ノーブランド服・アパレル（apparel）
+   - 有名ブランド名が明記されていない衣類
+   - 「kawaii」「cute」「dress」など一般的な形容詞のみ
+   - ロリータファッション、原宿系など日本のサブカルファッション
+   - axes femme, LIZ LISA 等の日本ブランドは一般ECで入手困難
+   - 型番や商品コードがない衣類
+   - 検索しても同一商品が見つからない可能性が高い服
+
 【出力形式】必ずこの形式で出力:
 SKIP: [YES/NO]
 REASON: [スキップ理由。スキップ不要なら「なし」]
-TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/production/figure/toy/other]
+TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/production/apparel/figure/toy/other]
 CONFIDENCE: [high/medium/low]
 DETAILS: [画像から読み取った詳細（1行）]
 

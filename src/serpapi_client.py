@@ -178,6 +178,7 @@ class SerpApiClient:
         "hinkalihachapuri.com",  # スパム/偽ECサイト（商品一覧ページのみ）
         "shanthinethralaya.com", # 海外スパムサイト（商品なし）
         "themarinaatroweswharf.com",  # 海外スパム/ブログサイト
+        "sgs109.com",            # 商品紹介ページ（購入不可）
         "audio-st.jp",           # オーディオ買取実績ページ（販売なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
         "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）

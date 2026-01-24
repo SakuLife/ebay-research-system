@@ -1903,9 +1903,29 @@ def main():
             best_source = None
             top_sources: List[RankedSource] = []  # トップ3の仕入先
             search_method = ""
+            skip_text_search = False  # Lens成功時に後続検索をスキップ
+            skip_lens_and_en = False  # アパレル検出時にLens/EN検索をスキップ
+            best_similarity_so_far = 0.0  # 最良の類似度を記録
+
+            # === SerpAPI節約: アパレル商品の検出 ===
+            # 日本のアパレルブランドはLens/EN検索の成功率が低いため、直接JP検索へ
+            JAPANESE_APPAREL_BRANDS = [
+                "liz lisa", "lizlisa", "axes femme", "axesfemme",
+                "angelic pretty", "angelicpretty", "baby the stars",
+                "metamorphose", "innocent world", "emily temple",
+                "honey cinnamon", "ank rouge", "secret honey",
+                "lolita", "harajuku", "kawaii dress", "kawaii skirt",
+                "kawaii blouse", "kawaii coat", "kawaii jacket",
+            ]
+            title_lower = ebay_title.lower() if ebay_title else ""
+            is_japanese_apparel = any(brand in title_lower for brand in JAPANESE_APPAREL_BRANDS)
+
+            if is_japanese_apparel:
+                skip_lens_and_en = True
+                print(f"  [API節約] 日本アパレルブランド検出 → Lens/EN検索スキップ、JP検索へ")
 
             # === 1. Google Lens画像検索 ===
-            if serpapi_client.is_enabled and image_url and not best_source:
+            if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en:
                 print(f"  [Step 1] Google Lens画像検索")
                 print(f"    Image URL: {image_url[:80]}...")
                 # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）
@@ -2028,15 +2048,23 @@ def main():
                             ))
                         best_source = top_sources[0].source
                         best_sim = top_sources[0].similarity
+                        best_similarity_so_far = best_sim
                         print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{best_sim:.0%}, 計{len(top_sources)}件)")
                         search_method = "画像検索"
+
+                        # === SerpAPI節約: Lens成功時の早期終了 ===
+                        # 類似度40%以上かつ価格ありなら、後続検索をスキップ
+                        LENS_SKIP_THRESHOLD = 0.40
+                        if best_sim >= LENS_SKIP_THRESHOLD and best_source.source_price_jpy > 0:
+                            skip_text_search = True
+                            print(f"    [API節約] 画像検索で良好な候補あり → テキスト検索スキップ")
                     else:
                         print(f"    → 類似度閾値({MIN_IMAGE_SIMILARITY:.0%})未満のため選択なし、次のステップへ")
                 else:
                     print(f"    → 有効な仕入先なし、次のステップへ")
 
             # === 2. 英語のままでGoogle Shopping検索（日本向け）===
-            if not top_sources and serpapi_client.is_enabled and ebay_title:
+            if not top_sources and serpapi_client.is_enabled and ebay_title and not skip_text_search and not skip_lens_and_en:
                 # クエリを整形（PSA番号、状態表記、ノイズワード除去）
                 cleaned_query = clean_query_for_shopping(ebay_title)
                 print(f"  [Step 2] Google Shopping検索 (英語/日本向け)")
@@ -2099,7 +2127,8 @@ def main():
                 else:
                     print(f"    (google.com: {google_url_skipped}, 価格無し: {no_price_skipped}, フリマ除外: {condition_skipped})")
 
-                # Shoppingが0件の場合、Web検索へフォールバック
+                # === SerpAPI節約: Shopping ENで候補があればWeb ENをスキップ ===
+                # Shoppingが0件の場合のみWeb検索へフォールバック
                 if not all_sources:
                     print(f"  [Step 2b] Shopping結果なし → Web検索フォールバック")
                     # conditionに応じて検索対象サイトを変更
@@ -2153,13 +2182,20 @@ def main():
                     top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name, condition=condition)
                     if top_sources:
                         best_source = top_sources[0].source
+                        best_similarity_so_far = top_sources[0].similarity
                         search_method = "英語検索"
                         print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
+
+                        # === SerpAPI節約: EN検索で類似度30%以上ならJP検索スキップ ===
+                        EN_SKIP_THRESHOLD = 0.30
+                        if best_similarity_so_far >= EN_SKIP_THRESHOLD:
+                            skip_text_search = True
+                            print(f"    [API節約] 英語検索で候補あり(類似度:{best_similarity_so_far:.0%}) → 日本語検索スキップ")
                     else:
                         print(f"    → 類似度閾値(20%)未満のため選択なし")
 
             # === 3. 日本語に翻訳してGoogle Shopping検索 ===
-            if not top_sources and serpapi_client.is_enabled:
+            if not top_sources and serpapi_client.is_enabled and not skip_text_search:
                 print(f"  [Step 3] Google Shopping検索 (日本語翻訳)")
 
                 # まずタイトルを整形してからGeminiで翻訳（ノイズを減らす）

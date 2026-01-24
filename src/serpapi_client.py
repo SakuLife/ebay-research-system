@@ -179,6 +179,7 @@ class SerpApiClient:
         "shanthinethralaya.com", # 海外スパムサイト（商品なし）
         "themarinaatroweswharf.com",  # 海外スパム/ブログサイト
         "sgs109.com",            # 商品紹介ページ（購入不可）
+        "saleflatet.click",      # スパム/偽ECサイト（商品一覧のみ）
         "audio-st.jp",           # オーディオ買取実績ページ（販売なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト
         "kotobukiya.co.jp",      # コトブキヤ公式（直販なし、店舗案内のみ）
@@ -362,9 +363,18 @@ class SerpApiClient:
                     if min_price > 0 and price < min_price:
                         continue
 
-                    condition = item.get("condition", "")
+                    item_condition = item.get("condition", "")
                     shipping = item.get("shipping", "")
                     thumbnail = item.get("thumbnail", "")
+
+                    # New条件の場合、USEDアイテムをスキップ
+                    if condition.lower() == "new":
+                        condition_lower = item_condition.lower()
+                        if any(used_term in condition_lower for used_term in [
+                            "used", "pre-owned", "pre owned", "refurbished",
+                            "for parts", "not working", "中古"
+                        ]):
+                            continue
 
                     # カテゴリ情報を取得（SerpApiの結果に含まれている場合）
                     category_id = item.get("category_id", "") or item.get("categoryId", "")
@@ -393,7 +403,7 @@ class SerpApiClient:
                         currency=currency,
                         link=link,
                         item_id=item_id,
-                        condition=condition,
+                        condition=item_condition,
                         shipping=shipping,
                         thumbnail=thumbnail,
                         category_id=category_id,
@@ -936,6 +946,18 @@ class SerpApiClient:
 
         # 購入不可サイト（商品紹介のみ、通販機能なし）を除外
         if any(domain in url_lower for domain in self.NON_PURCHASABLE_DOMAINS):
+            return True
+
+        # 商品一覧ページ（個別商品ページではない）を除外
+        list_page_patterns = [
+            "productlist",      # ProductList.aspx等
+            "/search.html",     # 検索結果ページ
+            "/search?",         # 検索クエリ
+            "?swrd=",           # 検索ワード
+            "?keywords=",       # キーワード検索
+            "/category/",       # カテゴリページ
+        ]
+        if any(pattern in url_lower for pattern in list_page_patterns):
             return True
 
         # New条件の場合、フリマ・中古系を除外

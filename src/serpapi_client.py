@@ -953,6 +953,8 @@ class SerpApiClient:
         list_page_patterns = [
             "productlist",      # ProductList.aspx等
             "/search.html",     # 検索結果ページ
+            "/search.aspx",     # 検索結果ページ（.NET系）
+            "goods/search",     # 商品検索ページ（samantha.co.jp等）
             "/search?",         # 検索クエリ
             "?swrd=",           # 検索ワード
             "?keywords=",       # キーワード検索

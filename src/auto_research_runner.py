@@ -2752,58 +2752,16 @@ def main():
             import time
             time.sleep(2)
 
-        # キーワードで有効な出力がなかった場合、サマリー行を記録
+        # キーワードで有効な出力がなかった場合、ログのみ（空行は作らない）
         if items_output_this_keyword == 0:
-            print(f"\n  [INFO] No valid items found for keyword: {keyword}")
-            print(f"         Writing summary row to spreadsheet...")
+            print(f"\n  [INFO] No valid items found for keyword: {keyword} (skipped: {total_skipped})")
+            # サマリー行は書き込まない（空行になるため）
 
-            # サマリー行を書き込み
-            summary_data = {
-                "keyword": raw_keyword,
-                "category_name": "",
-                "category_id": "",
-                "condition": condition,
-                "sourcing_results": [],
-                "ebay_url": "",
-                "ebay_price_usd": 0,
-                "ebay_shipping_usd": 0,
-                "profit_no_rebate": 0,
-                "profit_margin_no_rebate": 0,
-                "profit_with_rebate": 0,
-                "profit_margin_with_rebate": 0,
-                "error": f"該当商品なし: スキップ{total_skipped}件"
-            }
-            row_num = write_result_to_spreadsheet(sheets_client, summary_data)
-            print(f"  [WRITTEN] Row {row_num} (No valid items for '{keyword}')")
-            total_processed += 1
-            time.sleep(2)
-
-        # 目標件数未達でループ終了した場合（全アイテム処理済み）、通知行を記録
+        # 目標件数未達でループ終了した場合（全アイテム処理済み）、ログのみ
         elif items_output_this_keyword < items_per_keyword:
             print(f"\n  [INFO] All items exhausted for keyword: {keyword}")
             print(f"         Output: {items_output_this_keyword}/{items_per_keyword}, Skipped: {total_skipped}")
-            print(f"         Writing 'no more items' row to spreadsheet...")
-
-            # 「これ以上商品なし」行を書き込み
-            no_more_data = {
-                "keyword": raw_keyword,
-                "category_name": "",
-                "category_id": "",
-                "condition": condition,
-                "sourcing_results": [],
-                "ebay_url": "",
-                "ebay_price_usd": 0,
-                "ebay_shipping_usd": 0,
-                "profit_no_rebate": 0,
-                "profit_margin_no_rebate": 0,
-                "profit_with_rebate": 0,
-                "profit_margin_with_rebate": 0,
-                "error": f"このキーワードではこれ以上商品がありません（{items_output_this_keyword}件出力済み、{total_skipped}件処理済み）"
-            }
-            row_num = write_result_to_spreadsheet(sheets_client, no_more_data)
-            print(f"  [WRITTEN] Row {row_num} (No more items for '{keyword}')")
-            total_processed += 1
-            time.sleep(2)
+            # 「これ以上商品なし」行は書き込まない（空行になるため）
 
     # Summary
     print(f"\n{'='*60}")

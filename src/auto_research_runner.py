@@ -2756,16 +2756,28 @@ def main():
             import time
             time.sleep(2)
 
-        # キーワードで有効な出力がなかった場合、ログのみ（空行は作らない）
-        if items_output_this_keyword == 0:
-            print(f"\n  [INFO] No valid items found for keyword: {keyword} (skipped: {total_skipped})")
-            # サマリー行は書き込まない（空行になるため）
+        # キーワードで有効な出力がなかった場合 or 目標件数未達の場合、通知行を出力
+        if items_output_this_keyword < items_per_keyword:
+            if items_output_this_keyword == 0:
+                print(f"\n  [INFO] No valid items found for keyword: {keyword} (skipped: {total_skipped})")
+                msg = f"該当商品なし（{total_skipped}件スキップ）"
+            else:
+                print(f"\n  [INFO] All items exhausted for keyword: {keyword}")
+                print(f"         Output: {items_output_this_keyword}/{items_per_keyword}, Skipped: {total_skipped}")
+                msg = f"このキーワードではこれ以上商品がありません（{items_output_this_keyword}件出力済み）"
 
-        # 目標件数未達でループ終了した場合（全アイテム処理済み）、ログのみ
-        elif items_output_this_keyword < items_per_keyword:
-            print(f"\n  [INFO] All items exhausted for keyword: {keyword}")
-            print(f"         Output: {items_output_this_keyword}/{items_per_keyword}, Skipped: {total_skipped}")
-            # 「これ以上商品なし」行は書き込まない（空行になるため）
+            # 通知行を書き込み（キーワードとメモのみ、他は空）
+            worksheet = sheets_client.spreadsheet.worksheet("入力シート")
+            row_number = get_next_empty_row(sheets_client)
+            # A:日付, B:キーワード, V:ステータス, X:メモ のみ
+            notify_row = [""] * 24
+            notify_row[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付
+            notify_row[1] = raw_keyword  # B: キーワード
+            notify_row[4] = condition  # E: 新品中古
+            notify_row[21] = "完了"  # V: ステータス
+            notify_row[23] = msg  # X: メモ
+            worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row])
+            print(f"  [NOTIFY] Row {row_number}: {msg}")
 
     # Summary
     print(f"\n{'='*60}")

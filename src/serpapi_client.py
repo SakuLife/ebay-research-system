@@ -214,6 +214,7 @@ class SerpApiClient:
         "livedoor.",             # ライブドア
         "hatena.",               # はてな
         "note.com",              # note
+        "tsi-holdings.com",      # TSIホールディングス（ブランド紹介ページ、通販なし）
     ]
 
     def __init__(self, api_key: Optional[str] = None):

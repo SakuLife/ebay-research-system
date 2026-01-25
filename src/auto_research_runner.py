@@ -2588,10 +2588,14 @@ def main():
                 if not is_major_ec:
                     print(f"\n  [在庫確認] {best_source.source_site}...")
                     stock_result = scrape_price_for_url(best_source.source_url)
-                    if stock_result and not stock_result.in_stock:
-                        print(f"  [在庫確認] → 在庫切れ検出（利益計算は続行）")
-                        error_reason = "在庫切れ"
-                        # best_source は保持して利益計算を続行
+                    if stock_result:
+                        if not stock_result.in_stock:
+                            print(f"  [在庫確認] → 在庫切れ検出（{stock_result.stock_status}）")
+                            error_reason = "在庫切れ"
+                        else:
+                            print(f"  [在庫確認] → OK（在庫あり）")
+                    else:
+                        print(f"  [在庫確認] → 確認失敗（スクレイピングエラー）")
 
             # Step 5: Calculate profit (with weight estimation)
             profit_no_rebate = 0

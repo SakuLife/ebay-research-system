@@ -2556,10 +2556,10 @@ def main():
                             print(f"    問題: {', '.join(validation.issues)}")
 
                         if validation.suggestion == "skip":
-                            # 利益計算は実行するが、警告として記録
-                            print(f"  [Gemini検証] → 要確認（利益計算は実行）")
-                            error_reason = f"要確認: {validation.reason[:60]}"
-                            # best_source は保持して利益計算を続行
+                            # 明らかに別商品の場合はスキップ（スプシに書き込まない）
+                            print(f"  [Gemini検証] → 別商品のためスキップ")
+                            best_source = None  # 仕入先をクリアして書き込みをスキップ
+                            error_reason = "Gemini検証NG"
                         elif validation.suggestion == "retry":
                             # 次の候補を試す（現在は簡易版なのでスキップ扱い）
                             # TODO: working_candidatesの2番目以降を試すロジック
@@ -2717,7 +2717,7 @@ def main():
 
             # 仕入先が取れなかった場合はスプシに書かずスキップ
             # ただし「要価格確認」はURLが取れているので書き込む
-            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致"]
+            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG"]
             if error_reason in skip_errors:
                 print(f"\n  [SKIP] Not writing to sheet: {error_reason}")
                 total_skipped += 1

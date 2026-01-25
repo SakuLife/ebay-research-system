@@ -2766,14 +2766,13 @@ def main():
                 print(f"         Output: {items_output_this_keyword}/{items_per_keyword}, Skipped: {total_skipped}")
                 msg = f"このキーワードではこれ以上商品がありません（{items_output_this_keyword}件出力済み）"
 
-            # 通知行を書き込み（キーワードとメモのみ、他は空）
+            # 通知行を書き込み
             worksheet = sheets_client.spreadsheet.worksheet("入力シート")
             row_number = get_next_empty_row(sheets_client)
-            # A:日付, B:キーワード, V:ステータス, X:メモ のみ
             notify_row = [""] * 24
             notify_row[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付
             notify_row[1] = raw_keyword  # B: キーワード
-            notify_row[4] = condition  # E: 新品中古
+            notify_row[4] = "このキーワードで該当する商品はありません。"  # E: 通知
             notify_row[21] = "完了"  # V: ステータス
             notify_row[23] = msg  # X: メモ
             worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row])

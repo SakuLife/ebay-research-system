@@ -164,6 +164,7 @@ class SerpApiClient:
         "golfpartner.co.jp",  # ゴルフパートナー（中古クラブ店）
         "golfpartner.jp",   # ゴルフパートナー
         "usedgolf",         # 中古ゴルフ系
+        "putiers.cards",    # フリマ系サイト（.cards TLD）
     ]
 
     # 除外すべきサイト（検索結果に出てきても無視）
@@ -215,6 +216,24 @@ class SerpApiClient:
         "hatena.",               # はてな
         "note.com",              # note
         "tsi-holdings.com",      # TSIホールディングス（ブランド紹介ページ、通販なし）
+        "kaseifu-babysitter.com",  # 家政婦マッチングサイト（ECサイトではない、閉鎖済み）
+        "kogopay.com",             # 謎のサイトマップ的ページ（商品ページなし）
+        "rockettrailer.com",       # 404 Not Found（スパム/デッドサイト）
+        "superdetodo.com",         # 海外スパムサイト（偽商品ページ）
+    ]
+
+    # スパム/詐欺サイトによく使われるTLD（トップレベルドメイン）
+    # これらのTLDを持つサイトは基本的に除外する
+    SUSPICIOUS_TLDS = [
+        ".click",    # saleflatet.click, lookse.click 等
+        ".xyz",      # スパムに多用されるTLD
+        ".top",      # 中国系スパムに多い
+        ".work",     # スパムサイトに多い
+        ".site",     # 低信頼性
+        ".online",   # 低信頼性
+        ".icu",      # スパムに多用
+        ".buzz",     # スパムに多用
+        ".cards",    # putiers.cards 等（フリマ系スパム）
     ]
 
     def __init__(self, api_key: Optional[str] = None):
@@ -285,9 +304,10 @@ class SerpApiClient:
                 "-PSA", "-BGS", "-CGC", "-graded",  # 鑑定品
                 "-promo", "-promotional",  # プロモ
                 "-used", "-junk",  # 中古
+                "-set", "-bundle", "-lot", "-combo", "-complete",  # セット販売
             ]
             search_keyword = f"{keyword} {' '.join(exclude_terms)}"
-            print(f"  [eBay] Auto-exclude for New: card, kuji, PSA, promo")
+            print(f"  [eBay] Auto-exclude for New: card, kuji, PSA, promo, set/bundle")
 
         params = {
             "engine": "ebay",
@@ -953,6 +973,17 @@ class SerpApiClient:
         if any(domain in url_lower for domain in self.NON_PURCHASABLE_DOMAINS):
             return True
 
+        # 怪しいTLD（スパム/詐欺サイトに多用される）を除外
+        # URLからドメイン部分を抽出してTLDをチェック
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url_lower)
+            domain = parsed.netloc
+            if any(domain.endswith(tld) for tld in self.SUSPICIOUS_TLDS):
+                return True
+        except:
+            pass
+
         # 商品一覧ページ（個別商品ページではない）を除外
         list_page_patterns = [
             "productlist",      # ProductList.aspx等
@@ -963,8 +994,20 @@ class SerpApiClient:
             "?swrd=",           # 検索ワード
             "?keywords=",       # キーワード検索
             "/category/",       # カテゴリページ
+            "/collections/",    # Shopify系一覧ページ（ironheart.jp等）
+            "coordinate_detail",  # JINSコーディネートページ（商品ページではない）
         ]
         if any(pattern in url_lower for pattern in list_page_patterns):
+            return True
+
+        # スパム/SEOハッキングサイトのパターンを除外
+        # 例: ?e=70810289948602 のようなeBay商品IDをパラメータに持つURL
+        spam_url_patterns = [
+            r"\?e=\d{10,}",       # ?e= + 10桁以上の数字（eBay ID風）
+            r"\?item=\d{10,}",    # ?item= + 10桁以上の数字
+            r"\?id=\d{10,}",      # ?id= + 10桁以上の数字
+        ]
+        if any(re.search(pattern, url_lower) for pattern in spam_url_patterns):
             return True
 
         # New条件の場合、フリマ・中古系を除外

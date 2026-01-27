@@ -299,6 +299,8 @@ class PriceScraper:
             "売り切れ",
             "sold out",
             "品切れ",
+            "欠品中",
+            "欠品",
             "完売",
             "入荷待ち",
             "再入荷待ち",
@@ -407,10 +409,53 @@ class PriceScraper:
     def _extract_amazon_price(self, html: str) -> float:
         """
         AmazonのHTMLから価格を抽出する.
+
+        注意: min()ではなく最頻出価格を返す。
+        Amazonページには関連商品等の価格も表示されるため、
+        min()だと無関係な商品の価格を取得してしまう可能性がある。
         """
+        # 優先度の高い価格（メイン商品エリアの価格）
+        main_prices = []
+
+        # パターン0: 構造化データ（JSON-LD）から抽出（最優先）
+        # <script type="application/ld+json">{"@type":"Product","offers":{"price":31062}}</script>
+        import json
+        jsonld_matches = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
+        for jsonld in jsonld_matches:
+            try:
+                data = json.loads(jsonld)
+                if isinstance(data, dict):
+                    # Product タイプの offers から価格を取得
+                    if data.get("@type") == "Product":
+                        offers = data.get("offers", {})
+                        if isinstance(offers, dict):
+                            price = offers.get("price") or offers.get("lowPrice")
+                            if price:
+                                val = float(str(price).replace(',', ''))
+                                if 100 <= val <= 10000000:
+                                    main_prices.append(val)
+                        elif isinstance(offers, list):
+                            for offer in offers:
+                                price = offer.get("price") or offer.get("lowPrice")
+                                if price:
+                                    val = float(str(price).replace(',', ''))
+                                    if 100 <= val <= 10000000:
+                                        main_prices.append(val)
+            except:
+                pass
+
+        # JSON-LDから価格が見つかったらそれを優先
+        if main_prices:
+            from collections import Counter
+            price_counts = Counter(main_prices)
+            most_common = price_counts.most_common(1)
+            if most_common:
+                return most_common[0][0]
+
+        # 以降は従来のパターンマッチング
         prices_found = []
 
-        # パターン1: priceblock_ourprice, priceblock_dealprice
+        # パターン1: priceblock_ourprice, priceblock_dealprice（メイン価格エリア）
         pattern1 = re.findall(r'id="priceblock_[^"]*"[^>]*>\s*[¥￥]?\s*([\d,]+)', html)
         for p in pattern1:
             try:
@@ -445,10 +490,20 @@ class PriceScraper:
         # 有効な価格をフィルタ
         valid_prices = [p for p in prices_found if 100 <= p <= 10000000]
 
-        if valid_prices:
-            return min(valid_prices)  # 最安値を返す
+        if not valid_prices:
+            return 0
 
-        return 0
+        # 最頻出価格を返す（複数回出てくる価格が正しい可能性が高い）
+        from collections import Counter
+        price_counts = Counter(valid_prices)
+        most_common = price_counts.most_common(1)
+
+        if most_common:
+            return most_common[0][0]
+
+        # 頻度が同じなら最初に見つかった価格を返す（min()ではなく）
+        # min()は関連商品の安い価格を返してしまうリスクがある
+        return valid_prices[0]
 
     def _check_amazon_stock(self, html: str) -> tuple:
         """
@@ -485,6 +540,8 @@ class PriceScraper:
             r"Used.*from",
             r"件の中古品",
             r"中古商品",
+            r"マーケットプレイス",    # マーケットプレイスの出品者から購入
+            r"コレクター商品",        # コレクター商品（中古）
         ]
         has_used = any(re.search(p, html, re.IGNORECASE) for p in used_only_patterns)
 
@@ -686,12 +743,15 @@ class PriceScraper:
             "在庫切れ",
             "売り切れ",
             "品切れ",
+            "欠品中",             # monotaro等
+            "欠品",
             "完売",
             "sold out",
             "soldout",
             "入荷待ち",
             "再入荷待ち",
             "予約受付終了",
+            "予約終了",           # p-bandai等（「予約受付終了」「予約終了」両方）
             "受付終了",           # p-bandai等
             "受付は終了",         # p-bandai等
             "販売終了",
@@ -707,6 +767,11 @@ class PriceScraper:
             "注文できません",
             "ご注文いただけません",
             "お買い求めいただけません",
+            # サイト閉鎖・サービス終了
+            "閉鎖",               # HP閉鎖、サイト閉鎖等
+            "サービス終了",
+            "サービスを終了",
+            "営業終了",
             # 英語
             "out of stock",
             "out-of-stock",

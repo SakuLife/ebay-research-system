@@ -1184,11 +1184,56 @@ def calculate_condition_score(title: str, source_site: str) -> float:
         "psa", "bgs", "cgc", "graded",  # グレーディング済み = 中古
         "mint", "excellent", "near mint", "nm", "ex",  # 状態評価 = 中古
         "スリーブ", "白欠け", "初期傷", "微傷",
+        # 古書・ヴィンテージ品（古い年代のものは中古扱い）
+        "昭和", "平成",  # 古い年代の商品（昭和XX年等）
+        "古書", "古本", "絶版", "廃盤",
     ]
     if any(kw in title_lower for kw in used_keywords):
         score -= 0.7  # 中古は大幅減点（New条件時は実質除外に近い）
 
     return max(0.1, min(2.0, score))
+
+
+def is_accessory_product(title: str) -> tuple[bool, str]:
+    """
+    アクセサリー/周辺機器かどうか判定する.
+    本体を探しているのにケース等が見つかった場合に除外するため.
+
+    Args:
+        title: 仕入先商品タイトル
+
+    Returns:
+        (判定結果, 検出されたキーワード)
+    """
+    title_lower = title.lower()
+
+    # 「For [ブランド名]」パターン（英語のアクセサリー表記）
+    # 例: "For Lenovo Legion", "For iPhone 15"
+    import re
+    if re.search(r'\bfor\s+[a-z]', title_lower):
+        return (True, "For [Brand]")
+
+    # アクセサリーキーワード
+    accessory_keywords = [
+        # ケース・カバー類
+        "ケース", "カバー", "case", "cover", "保護", "フィルム", "film",
+        "スクリーンプロテクター", "screen protector",
+        # 充電・電源関連
+        "充電器", "charger", "充電ケーブル", "cable", "アダプター", "adapter",
+        "acアダプタ", "電源", "バッテリー", "battery",
+        # スタンド・ホルダー
+        "スタンド", "stand", "ホルダー", "holder", "マウント", "mount",
+        # ストラップ・アクセサリ
+        "ストラップ", "strap", "キーホルダー",
+        # その他周辺機器
+        "対応", "専用", "互換", "compatible",
+    ]
+
+    for kw in accessory_keywords:
+        if kw in title_lower:
+            return (True, kw)
+
+    return (False, "")
 
 
 def is_limited_edition_product(title: str) -> tuple[bool, str]:
@@ -1393,6 +1438,12 @@ def find_top_matching_sources(
         # 「中古」「美品」「Aランク」等が含まれる場合、スコアは0.3程度になる
         if condition == "New" and condition_score < 0.5:
             used_excluded += 1
+            continue
+
+        # アクセサリー/周辺機器の除外（本体を探しているのにケースが出てきた場合等）
+        is_accessory, accessory_kw = is_accessory_product(source.title)
+        if is_accessory:
+            print(f"    [SKIP] アクセサリー検出: '{accessory_kw}' → {source.title[:40]}...")
             continue
 
         # 仕入れ優先度
@@ -2026,6 +2077,10 @@ def main():
                             if cond_score < 0.5:
                                 used_excluded_count += 1
                                 continue
+                        # アクセサリー/周辺機器の除外
+                        is_acc, _ = is_accessory_product(src.title)
+                        if is_acc:
+                            continue
                         # カテゴリ除外チェック（Plushなのに本/雑誌など）
                         should_exclude, _ = check_category_exclusion(src.title, category_name)
                         if should_exclude:
@@ -2776,6 +2831,12 @@ def main():
             notify_row[21] = "完了"  # V: ステータス
             notify_row[23] = msg  # X: メモ
             worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row])
+
+            # 黒背景・白文字のフォーマットを適用
+            worksheet.format(f"A{row_number}:X{row_number}", {
+                "backgroundColor": {"red": 0, "green": 0, "blue": 0},
+                "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}}
+            })
             print(f"  [NOTIFY] Row {row_number}: {msg}")
 
     # Summary

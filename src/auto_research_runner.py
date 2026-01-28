@@ -2832,12 +2832,16 @@ def main():
             notify_row[23] = msg  # X: メモ
             worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row])
 
-            # 黒背景・白文字のフォーマットを適用
-            worksheet.format(f"A{row_number}:X{row_number}", {
-                "backgroundColor": {"red": 0, "green": 0, "blue": 0},
-                "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}}
-            })
-            print(f"  [NOTIFY] Row {row_number}: {msg}")
+            # 黒背景・白文字・折り返しなしのフォーマットを適用
+            try:
+                worksheet.format(f"A{row_number}:X{row_number}", {
+                    "backgroundColor": {"red": 0, "green": 0, "blue": 0},
+                    "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                    "wrapStrategy": "OVERFLOW_CELL"
+                })
+                print(f"  [NOTIFY] Row {row_number}: {msg} (黒背景適用)")
+            except Exception as e:
+                print(f"  [NOTIFY] Row {row_number}: {msg} (フォーマット失敗: {e})")
 
     # Summary
     print(f"\n{'='*60}")

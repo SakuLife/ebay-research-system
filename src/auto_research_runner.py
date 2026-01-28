@@ -2631,6 +2631,10 @@ def main():
                                 error_reason = f"要確認: {validation.reason[:60]}"
                                 # best_source は保持して利益計算を続行
                         # accept の場合はそのまま進む
+                    else:
+                        # Gemini検証失敗（APIエラー等）→ 要確認としてマーク
+                        print(f"    [WARN] Gemini検証失敗 → 要確認")
+                        error_reason = "要確認: Gemini検証失敗"
 
             # === 在庫確認: 非大手ECサイトの場合のみ ===
             # Amazon/楽天/Yahooはスクレイピング時に在庫確認済み

@@ -814,22 +814,36 @@ class PriceScraper:
             r'data-(?:stock|availability)="(?:0|false|out|none)"',
         ]
 
+        # 強い在庫ありパターン（これらがあれば在庫あり確定）
+        # ページ内に「売り切れ」等があっても、メイン商品が「残りわずか」なら在庫あり
+        strong_in_stock_patterns = [
+            "在庫わずか",
+            "残りわずか",
+            "残り僅か",
+            r"残り\d+点",
+            r"残り\d+個",
+            r"在庫\s*[:：]\s*\d+",          # 在庫: 3 等
+            r'"availability"\s*:\s*"(?:https?://schema\.org/)?InStock"',
+            r'"availability"\s*:\s*"instock"',
+            r'"availability"\s*:\s*"(?:https?://schema\.org/)?LimitedAvailability"',
+        ]
+
+        for pattern in strong_in_stock_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (True, "in_stock")
+
+        # 在庫切れパターンをチェック
         for pattern in out_of_stock_patterns:
             if re.search(pattern, html, re.IGNORECASE):
                 return (False, "out_of_stock")
 
-        # 在庫ありを示すパターン
+        # 通常の在庫ありパターン
         in_stock_patterns = [
             "在庫あり",
-            "在庫わずか",
-            "残りわずか",
-            r"残り\d+点",
             "カートに入れる",
             "カートに追加",
             "今すぐ購入",
             "購入する",
-            r'"availability"\s*:\s*"(?:https?://schema\.org/)?InStock"',
-            r'"availability"\s*:\s*"instock"',
         ]
 
         for pattern in in_stock_patterns:

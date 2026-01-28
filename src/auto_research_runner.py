@@ -2837,10 +2837,14 @@ def main():
             worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row])
 
             # 黒背景・白文字・折り返しなしのフォーマットを適用
+            # 注意: 色はfloat(0.0〜1.0)で指定する必要がある
             try:
                 worksheet.format(f"A{row_number}:X{row_number}", {
-                    "backgroundColor": {"red": 0, "green": 0, "blue": 0},
-                    "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                    "backgroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
+                    "textFormat": {
+                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                        "bold": True
+                    },
                     "wrapStrategy": "OVERFLOW_CELL"
                 })
                 print(f"  [NOTIFY] Row {row_number}: {msg} (黒背景適用)")

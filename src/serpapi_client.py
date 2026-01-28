@@ -399,6 +399,9 @@ class SerpApiClient:
                     # New条件の場合、USEDアイテムをスキップ
                     if condition.lower() == "new":
                         condition_lower = item_condition.lower()
+                        title_lower = title.lower()
+
+                        # コンディション欄で判定
                         if any(used_term in condition_lower for used_term in [
                             "used", "pre-owned", "pre owned", "refurbished",
                             "for parts", "not working", "中古",
@@ -407,6 +410,22 @@ class SerpApiClient:
                             "seller refurbished",  # 出品者整備済み
                             "certified refurbished",  # 認定整備済み
                         ]):
+                            continue
+
+                        # タイトルで中古品判定（MINTは中古の状態表記）
+                        # 「MINT」「NEAR MINT」「TOP MINT」等は中古品の良品を示す
+                        used_title_patterns = [
+                            r'\bmint\b',           # MINT（単独）
+                            r'\bnear mint\b',      # NEAR MINT
+                            r'\btop mint\b',       # TOP MINT
+                            r'\bexcellent\+?\+?\b', # EXCELLENT, EXCELLENT+, EXCELLENT++
+                            r'\bvery good\b',      # VERY GOOD
+                            r'\bgood\b',           # GOOD（状態表記として）
+                            r'\bjunk\b',           # JUNK
+                            r'\bas is\b',          # AS IS
+                            r'\bused\b',           # USED
+                        ]
+                        if any(re.search(pattern, title_lower) for pattern in used_title_patterns):
                             continue
 
                     # カテゴリ情報を取得（SerpApiの結果に含まれている場合）

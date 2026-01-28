@@ -329,10 +329,11 @@ class SerpApiClient:
             params["_salic"] = location_code
             print(f"  [SerpApi] Filtering by location: {item_location} (code={location_code})")
 
-        # Add condition filter (eBay uses different format)
-        # Note: LH_ItemCondition uses "1000" for New, "3000" for Used on eBay
-        # But SerpApi may not support this for sold items - skip for now
-        # Condition filtering will be done on domestic source search instead
+        # Add condition filter
+        # LH_ItemCondition: 1000=New, 1500=Open box, 3000=Used, 7000=For parts
+        if condition.lower() == "new":
+            params["LH_ItemCondition"] = "1000"
+            print(f"  [SerpApi] Filtering by condition: New only (LH_ItemCondition=1000)")
 
         try:
             print(f"  [SerpApi] Searching sold items: '{search_keyword[:60]}...' on {ebay_domain}" if len(search_keyword) > 60 else f"  [SerpApi] Searching sold items: '{search_keyword}' on {ebay_domain}")

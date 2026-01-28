@@ -397,7 +397,11 @@ class SerpApiClient:
                         condition_lower = item_condition.lower()
                         if any(used_term in condition_lower for used_term in [
                             "used", "pre-owned", "pre owned", "refurbished",
-                            "for parts", "not working", "中古"
+                            "for parts", "not working", "中古",
+                            "like new", "likenew", "like-new",  # ほぼ新品も中古扱い
+                            "open box", "openbox",  # 開封済み
+                            "seller refurbished",  # 出品者整備済み
+                            "certified refurbished",  # 認定整備済み
                         ]):
                             continue
 

@@ -220,6 +220,9 @@ class SerpApiClient:
         "kogopay.com",             # 謎のサイトマップ的ページ（商品ページなし）
         "rockettrailer.com",       # 404 Not Found（スパム/デッドサイト）
         "superdetodo.com",         # 海外スパムサイト（偽商品ページ）
+        "etpur.com",               # アクセス不可サイト
+        "e-aj.co.jp",              # 404エラーが多い
+        "tenryu-site.com",         # 403 Forbiddenでアクセス不可
     ]
 
     # スパム/詐欺サイトによく使われるTLD（トップレベルドメイン）

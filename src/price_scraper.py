@@ -705,7 +705,27 @@ class PriceScraper:
         try:
             print(f"    [Scrape] Fetching page (generic)...")
             response = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
-            response.raise_for_status()
+
+            # HTTPエラーは在庫切れ/購入不可として扱う
+            if response.status_code == 404:
+                print(f"    [Scrape] 404 Not Found → 在庫切れ扱い")
+                return ScrapedPrice(
+                    price=0, success=False, error_message="404 Not Found",
+                    in_stock=False, stock_status="not_found"
+                )
+            if response.status_code == 403:
+                print(f"    [Scrape] 403 Forbidden → アクセス不可")
+                return ScrapedPrice(
+                    price=0, success=False, error_message="403 Forbidden",
+                    in_stock=False, stock_status="forbidden"
+                )
+            if response.status_code >= 400:
+                print(f"    [Scrape] HTTP {response.status_code} → エラー")
+                return ScrapedPrice(
+                    price=0, success=False, error_message=f"HTTP {response.status_code}",
+                    in_stock=False, stock_status="http_error"
+                )
+
             html = response.text
 
             in_stock, stock_status = self._check_generic_stock(html)
@@ -724,9 +744,13 @@ class PriceScraper:
             )
 
         except requests.exceptions.RequestException as e:
-            return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}")
+            # ネットワークエラーも在庫切れ扱い（購入できないので）
+            print(f"    [Scrape] Request error → 購入不可扱い")
+            return ScrapedPrice(price=0, success=False, error_message=f"Request failed: {str(e)[:50]}",
+                               in_stock=False, stock_status="request_error")
         except Exception as e:
-            return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}")
+            return ScrapedPrice(price=0, success=False, error_message=f"Scrape error: {str(e)[:50]}",
+                               in_stock=False, stock_status="error")
 
     def _check_generic_stock(self, html: str) -> tuple:
         """
@@ -750,6 +774,9 @@ class PriceScraper:
             "soldout",
             "入荷待ち",
             "再入荷待ち",
+            "次回入荷待ち",
+            "入荷についてはお問い合わせ",
+            "メーカー取り寄せ",         # giftmall等
             "予約受付終了",
             "予約終了",           # p-bandai等（「予約受付終了」「予約終了」両方）
             "受付終了",           # p-bandai等

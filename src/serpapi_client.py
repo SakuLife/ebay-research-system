@@ -191,6 +191,9 @@ class SerpApiClient:
         "goodsmile.info",        # グッドスマイルカンパニー公式（直販なし）
         "megahobby.jp",          # メガハウス公式（直販なし）
         "bandai-hobby.net",      # バンダイホビー公式（直販なし）
+        "tamiya.com",            # タミヤ公式（製品紹介のみ、購入はtamiyashop.jp）
+        "ktc.jp",                # KTC公式カタログ（製品紹介のみ、購入は販売店経由）
+        "toyosteel.jp",          # TOYO STEEL公式（製品一覧のみ、購入は販売店経由）
         "tamashii.jp",           # 魂ウェブ（予約のみ、即購入不可が多い）
         "hobbystock.jp",         # ホビーストック（情報サイト）
         "amiami.jp",             # あみあみ公式（.comは通販OK、.jpは情報）
@@ -1018,8 +1021,10 @@ class SerpApiClient:
             "/search.aspx",     # 検索結果ページ（.NET系）
             "goods/search",     # 商品検索ページ（samantha.co.jp等）
             "/search?",         # 検索クエリ
+            "/ksearch",         # askul.co.jp/ksearch/ 等
             "?swrd=",           # 検索ワード
             "?keywords=",       # キーワード検索
+            "?searchword=",     # 検索ワード（askul等）
             "/category/",       # カテゴリページ
             "/collections/",    # Shopify系一覧ページ（ironheart.jp等）
             "coordinate_detail",  # JINSコーディネートページ（商品ページではない）

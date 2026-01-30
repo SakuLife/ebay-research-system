@@ -771,7 +771,7 @@ class PriceScraper:
             "欠品",
             "完売",
             "sold out",
-            "soldout",
+            r"\bsoldout\b",       # 単語境界付き（"isSoldOut":false 誤検知防止）
             "入荷待ち",
             "再入荷待ち",
             "次回入荷待ち",
@@ -814,38 +814,63 @@ class PriceScraper:
             r'class="[^"]*(?:sold-?out|out-?of-?stock|unavailable)[^"]*"',
             # data属性
             r'data-(?:stock|availability)="(?:0|false|out|none)"',
+            # 明示的な品切れフラグ（値がtrue）
+            r'"(?:is_?)?sold_?out"\s*:\s*true',
         ]
 
         # 強い在庫ありパターン（これらがあれば在庫あり確定）
-        # ページ内に「売り切れ」等があっても、メイン商品が「残りわずか」なら在庫あり
+        # ページ内に「売り切れ」等があっても、カートボタンがあれば在庫あり
         strong_in_stock_patterns = [
+            # 購入UIボタン（カートに入れるボタンがあれば確実に在庫あり）
+            "カートに入れる",
+            "カートに追加",
+            "カゴに入れる",       # アスクル等
+            "今すぐ購入",
+            # 在庫表示
             "在庫わずか",
             "残りわずか",
             "残り僅か",
             r"残り\d+点",
             r"残り\d+個",
             r"在庫\s*[:：]\s*\d+",          # 在庫: 3 等
+            "在庫あり",
+            # Schema.org 構造化データ
             r'"availability"\s*:\s*"(?:https?://schema\.org/)?InStock"',
             r'"availability"\s*:\s*"instock"',
             r'"availability"\s*:\s*"(?:https?://schema\.org/)?LimitedAvailability"',
+            # JSON品切れフラグ（値がfalse = 在庫あり）
+            r'"(?:is_?)?sold_?out"\s*:\s*false',  # ec.f-gear.co.jp等
         ]
 
+        # 両方のパターンを先にチェックし、競合時は品切れを優先
+        # （完売ページにテンプレートのカートボタンHTMLが残るケース対策）
+        has_strong_in_stock = False
         for pattern in strong_in_stock_patterns:
             if re.search(pattern, html, re.IGNORECASE):
-                return (True, "in_stock")
+                has_strong_in_stock = True
+                break
 
-        # 在庫切れパターンをチェック
+        has_out_of_stock = False
+        matched_oos_pattern = ""
         for pattern in out_of_stock_patterns:
             if re.search(pattern, html, re.IGNORECASE):
-                return (False, "out_of_stock")
+                has_out_of_stock = True
+                matched_oos_pattern = pattern
+                break
 
-        # 通常の在庫ありパターン
+        if has_strong_in_stock and has_out_of_stock:
+            # 両方存在 → 品切れ表示を優先（カートボタンは無効化されている可能性が高い）
+            return (False, "out_of_stock")
+        elif has_strong_in_stock:
+            return (True, "in_stock")
+        elif has_out_of_stock:
+            return (False, "out_of_stock")
+
+        # 通常の在庫ありパターン（追加のフォールバック）
         in_stock_patterns = [
-            "在庫あり",
-            "カートに入れる",
-            "カートに追加",
-            "今すぐ購入",
             "購入する",
+            "買い物かごに入れる",
+            "注文する",
         ]
 
         for pattern in in_stock_patterns:

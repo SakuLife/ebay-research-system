@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
@@ -15,7 +16,7 @@ from .ebay_client import EbayClient
 from .sourcing import SourcingClient
 from .profit import calculate_profit
 from .sheets_client import GoogleSheetsClient
-from .spreadsheet_mapping import INPUT_SHEET_COLUMNS
+from .spreadsheet_mapping import INPUT_SHEET_COLUMNS, COL_INDEX
 from .search_base_client import SearchBaseClient
 from .config_loader import load_all_configs
 from .weight_estimator import estimate_weight_from_title, detect_product_type
@@ -1848,6 +1849,8 @@ def main():
         # 出力目標: items_per_keyword 件をスプレッドシートに出力
         # 処理済みスキップや利益不足スキップがあっても、目標数に達するまで次の商品を試す
         items_output_this_keyword = 0
+        skipped_this_keyword = 0  # このキーワードでのスキップ数
+        output_ebay_titles = []   # このキーワードで出力済みのeBayタイトル（重複検出用）
 
         for item in active_items:
             # 出力目標に達したら終了
@@ -1880,7 +1883,25 @@ def main():
             if ebay_item_id and ebay_item_id in processed_ebay_ids:
                 print(f"\n  [SKIP] Already processed: {ebay_item_id}")
                 total_skipped += 1
+                skipped_this_keyword += 1
                 continue
+
+            # 同一キーワード内でのタイトル重複チェック（出品者違いの同一商品を排除）
+            if ebay_title and output_ebay_titles:
+                title_lower = ebay_title.lower().strip()
+                is_dup = False
+                for prev_title in output_ebay_titles:
+                    sim = SequenceMatcher(None, title_lower, prev_title.lower().strip()).ratio()
+                    if sim >= 0.85:
+                        print(f"\n  [SKIP] Duplicate eBay listing (similarity: {sim:.0%})")
+                        print(f"         Current: {ebay_title[:60]}...")
+                        print(f"         Prev:    {prev_title[:60]}...")
+                        is_dup = True
+                        break
+                if is_dup:
+                    total_skipped += 1
+                    skipped_this_keyword += 1
+                    continue
 
             # 限定品/プレミアム品はスキップ（一般ECで新品入手困難）
             is_limited, limited_keyword = is_limited_edition_product(ebay_title)
@@ -1888,6 +1909,7 @@ def main():
                 print(f"\n  [SKIP] Limited/Premium product detected: '{limited_keyword}'")
                 print(f"         Title: {ebay_title[:60]}...")
                 total_skipped += 1
+                skipped_this_keyword += 1
                 continue
 
             # PSA/BGS/CGC鑑定品はNew条件ではスキップ（鑑定済み=中古扱い）
@@ -1901,6 +1923,7 @@ def main():
                 if is_graded:
                     print(f"\n  [SKIP] Graded/PSA item (not New): {ebay_title[:50]}...")
                     total_skipped += 1
+                    skipped_this_keyword += 1
                     continue
 
             # CCG/TCGカード系カテゴリはNew条件ではスキップ（大手ECで新品入手困難）
@@ -1912,6 +1935,7 @@ def main():
                     print(f"\n  [SKIP] Card category (hard to source new): {category_name}")
                     print(f"         Title: {ebay_title[:50]}...")
                     total_skipped += 1
+                    skipped_this_keyword += 1
                     continue
 
             # 画像URLも取得
@@ -1933,6 +1957,7 @@ def main():
                         print(f"         Type: {image_analysis.product_type} (confidence: {image_analysis.confidence})")
                         print(f"         Title: {ebay_title[:50]}...")
                         total_skipped += 1
+                        skipped_this_keyword += 1
                         continue
 
             print(f"\n  Processing: {ebay_url}")
@@ -2512,6 +2537,15 @@ def main():
 
                 valid_candidates = [c for c in candidates_with_qty if c["qty_match"] > 0.0]
 
+                # 404/アクセス不可なURLは候補から除外（在庫切れとは異なりページ自体が無効）
+                dead_statuses = {"not_found", "forbidden", "http_error"}
+                dead_candidates = [c for c in valid_candidates if c["stock_status"] in dead_statuses]
+                if dead_candidates:
+                    print(f"\n  [INFO] 無効URL {len(dead_candidates)}件を除外:")
+                    for c in dead_candidates:
+                        print(f"         - {c['ranked_src'].source.source_site}: {c['stock_status']} ({c['ranked_src'].source.title[:30]}...)")
+                    valid_candidates = [c for c in valid_candidates if c["stock_status"] not in dead_statuses]
+
                 if not valid_candidates:
                     # 全て数量不一致の場合
                     print(f"\n  [WARN] 全候補が数量不一致！eBay: {ebay_quantity.pattern_matched}")
@@ -2758,6 +2792,7 @@ def main():
                 # Check if profit meets minimum threshold
                 if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
                     print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy} → 次の商品へ")
+                    skipped_this_keyword += 1
                     continue  # スプレッドシートに書き込まず、次の商品を試す
             else:
                 print(f"\n[5/5] Skipping profit calculation (no source found)")
@@ -2774,12 +2809,13 @@ def main():
                     "price": src_price
                 })
 
-            # 仕入先が取れなかった場合はスプシに書かずスキップ
-            # ただし「要価格確認」はURLが取れているので書き込む
-            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG"]
+            # 仕入先が取れなかった/在庫切れの場合はスプシに書かずスキップ
+            # → 出力件数にカウントせず、次のeBay商品を試す
+            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG", "在庫切れ"]
             if error_reason in skip_errors:
                 print(f"\n  [SKIP] Not writing to sheet: {error_reason}")
                 total_skipped += 1
+                skipped_this_keyword += 1
                 continue
 
             result_data = {
@@ -2801,6 +2837,8 @@ def main():
             row_num = write_result_to_spreadsheet(sheets_client, result_data)
             total_processed += 1
             items_output_this_keyword += 1  # このキーワードで処理した件数
+            if ebay_title:
+                output_ebay_titles.append(ebay_title)  # 重複検出用に記録
 
             if profit_no_rebate > 0 and not error_reason:
                 total_profitable += 1
@@ -2818,28 +2856,30 @@ def main():
         # キーワードで有効な出力がなかった場合 or 目標件数未達の場合、通知行を出力
         if items_output_this_keyword < items_per_keyword:
             if items_output_this_keyword == 0:
-                print(f"\n  [INFO] No valid items found for keyword: {keyword} (skipped: {total_skipped})")
-                msg = f"該当商品なし（{total_skipped}件スキップ）"
+                print(f"\n  [INFO] No valid items found for keyword: {keyword} (skipped: {skipped_this_keyword})")
+                notify_text = f"該当する商品なし"
+                msg = f"該当商品なし（{skipped_this_keyword}件スキップ）"
             else:
                 print(f"\n  [INFO] All items exhausted for keyword: {keyword}")
-                print(f"         Output: {items_output_this_keyword}/{items_per_keyword}, Skipped: {total_skipped}")
-                msg = f"このキーワードではこれ以上商品がありません（{items_output_this_keyword}件出力済み）"
+                print(f"         Output: {items_output_this_keyword}/{items_per_keyword}, Skipped: {skipped_this_keyword}")
+                notify_text = f"これ以上該当する商品なし（{items_output_this_keyword}/{items_per_keyword}件）"
+                msg = f"{items_output_this_keyword}/{items_per_keyword}件出力、{skipped_this_keyword}件スキップ"
 
             # 通知行を書き込み
             worksheet = sheets_client.spreadsheet.worksheet("入力シート")
             row_number = get_next_empty_row(sheets_client)
-            notify_row = [""] * 24
+            notify_row = [""] * len(INPUT_SHEET_COLUMNS)
             notify_row[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付
             notify_row[1] = raw_keyword  # B: キーワード
-            notify_row[4] = "このキーワードで該当する商品はありません。"  # E: 通知
-            notify_row[21] = "完了"  # V: ステータス
-            notify_row[23] = msg  # X: メモ
-            worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row])
+            notify_row[COL_INDEX["ステータス"]] = "完了"
+            notify_row[COL_INDEX["メモ"]] = f"{notify_text} | {msg}"
+            worksheet.update(range_name=f"A{row_number}:{chr(64 + len(INPUT_SHEET_COLUMNS))}{row_number}", values=[notify_row])
 
             # 黒背景・白文字・折り返しなしのフォーマットを適用
             # 注意: 色はfloat(0.0〜1.0)で指定する必要がある
             try:
-                worksheet.format(f"A{row_number}:X{row_number}", {
+                end_col = chr(64 + len(INPUT_SHEET_COLUMNS))
+                worksheet.format(f"A{row_number}:{end_col}{row_number}", {
                     "backgroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
                     "textFormat": {
                         "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},

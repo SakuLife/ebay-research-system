@@ -240,6 +240,18 @@ class SerpApiClient:
         ".icu",      # スパムに多用
         ".buzz",     # スパムに多用
         ".cards",    # putiers.cards 等（フリマ系スパム）
+        ".clinic",   # 医療機関（ECサイトではない）
+        ".dental",   # 歯科（ECサイトではない）
+        ".hospital", # 病院（ECサイトではない）
+        ".salon",    # サロン（ECサイトではない）
+        ".fitness",  # フィットネス（ECサイトではない）
+        ".travel",   # 旅行系（ECサイトではない）
+        ".realty",   # 不動産（ECサイトではない）
+        ".law",      # 法律事務所（ECサイトではない）
+        ".attorney", # 弁護士（ECサイトではない）
+        ".church",   # 教会（ECサイトではない）
+        ".school",   # 学校（ECサイトではない）
+        ".university", # 大学（ECサイトではない）
     ]
 
     # 海外国別TLD（日本国内仕入先ではないため除外）

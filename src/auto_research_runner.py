@@ -1546,42 +1546,44 @@ def get_processed_ebay_ids(sheet_client) -> set:
 
 def update_sheet_headers(sheet_client) -> bool:
     """
-    入力シートのヘッダー行（1行目）を最新の列構成に更新する.
+    入力シートのヘッダー行（1行目）をチェックする（読み取り専用）.
+    ヘッダーの自動書き換えは行わない。
 
     Returns:
-        更新成功ならTrue
+        ヘッダーが期待通りならTrue
     """
     try:
         worksheet = sheet_client.spreadsheet.worksheet("入力シート")
 
-        # 現在のヘッダーを取得
+        # 現在のヘッダーを取得（チェックのみ、書き換えない）
         current_headers = worksheet.row_values(1)
         expected_headers = INPUT_SHEET_COLUMNS
 
-        # ヘッダーが一致しているかチェック
-        if current_headers == expected_headers:
-            print(f"  [INFO] Headers are up to date ({len(expected_headers)} columns)")
-            return True
-
-        # ヘッダーを更新
-        cell_range = f"A1:X1"  # 24列
-        worksheet.update(range_name=cell_range, values=[expected_headers])
-        print(f"  [INFO] Headers updated: {len(current_headers)} → {len(expected_headers)} columns")
-        print(f"  [INFO] New columns: 新品中古(E), 出品フラグ(W)")
+        if current_headers[:len(expected_headers)] == expected_headers:
+            print(f"  [INFO] Headers OK ({len(expected_headers)} columns)")
+        else:
+            print(f"  [WARN] Headers mismatch (expected {len(expected_headers)} cols, found {len(current_headers)} cols)")
+            print(f"  [WARN] ヘッダーがコードの定義と異なります（自動修正しません）")
         return True
 
     except Exception as e:
-        print(f"  [WARN] Failed to update headers: {e}")
+        print(f"  [WARN] Failed to check headers: {e}")
         return False
 
 
 def get_next_empty_row(sheet_client) -> int:
-    """Get the next empty row number in the input sheet."""
+    """Get the next empty row number in the input sheet.
+
+    書式設定のみのセル（空文字）を無視し、実データがある最終行の次を返す。
+    """
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
-    # Get all values in column A (date column)
     col_a_values = worksheet.col_values(1)
-    # Return the next row after the last non-empty row (1-indexed)
-    return len(col_a_values) + 1
+    # 末尾から逆順に探し、実データがある最終行を見つける
+    # （書式設定で空セルが大量に返されるケース対策）
+    for i in range(len(col_a_values) - 1, -1, -1):
+        if col_a_values[i] and col_a_values[i].strip():
+            return i + 2  # i=0-indexed → row=i+1、次の行=i+2
+    return 2  # データなし → ヘッダー(row1)の次
 
 
 def write_result_to_spreadsheet(sheet_client, data: dict):

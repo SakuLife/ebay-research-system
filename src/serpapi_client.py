@@ -242,6 +242,57 @@ class SerpApiClient:
         ".cards",    # putiers.cards 等（フリマ系スパム）
     ]
 
+    # 海外国別TLD（日本国内仕入先ではないため除外）
+    # .jp / .co.jp = 日本（許可）、.com / .net / .org = 汎用（許可）
+    FOREIGN_COUNTRY_TLDS = [
+        # 欧州
+        ".dk",       # デンマーク（seramikku.dk等）
+        ".de",       # ドイツ
+        ".fr",       # フランス
+        ".it",       # イタリア
+        ".es",       # スペイン
+        ".nl",       # オランダ
+        ".be",       # ベルギー
+        ".se",       # スウェーデン
+        ".no",       # ノルウェー
+        ".fi",       # フィンランド
+        ".at",       # オーストリア
+        ".ch",       # スイス
+        ".pt",       # ポルトガル
+        ".pl",       # ポーランド
+        ".cz",       # チェコ
+        ".ie",       # アイルランド
+        ".hu",       # ハンガリー
+        ".ro",       # ルーマニア
+        ".co.uk",    # イギリス
+        ".uk",       # イギリス
+        # 北米・南米
+        ".ca",       # カナダ
+        ".mx",       # メキシコ
+        ".br",       # ブラジル
+        ".ar",       # アルゼンチン
+        ".cl",       # チリ
+        ".co",       # コロンビア
+        # アジア太平洋（日本以外）
+        ".nz",       # ニュージーランド（replete.nz等）
+        ".au",       # オーストラリア
+        ".kr",       # 韓国
+        ".cn",       # 中国
+        ".tw",       # 台湾
+        ".hk",       # 香港
+        ".sg",       # シンガポール
+        ".my",       # マレーシア
+        ".th",       # タイ
+        ".in",       # インド
+        ".ph",       # フィリピン
+        ".id",       # インドネシア
+        # その他
+        ".ru",       # ロシア
+        ".za",       # 南アフリカ
+        ".tr",       # トルコ
+        ".il",       # イスラエル
+    ]
+
     def __init__(self, api_key: Optional[str] = None):
         """
         Args:
@@ -1003,13 +1054,16 @@ class SerpApiClient:
         if any(domain in url_lower for domain in self.NON_PURCHASABLE_DOMAINS):
             return True
 
-        # 怪しいTLD（スパム/詐欺サイトに多用される）を除外
+        # 怪しいTLD / 海外国別TLDを除外
         # URLからドメイン部分を抽出してTLDをチェック
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url_lower)
             domain = parsed.netloc
             if any(domain.endswith(tld) for tld in self.SUSPICIOUS_TLDS):
+                return True
+            # 海外サイトを除外（国内仕入先のみ対象）
+            if any(domain.endswith(tld) for tld in self.FOREIGN_COUNTRY_TLDS):
                 return True
         except:
             pass

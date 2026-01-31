@@ -1740,9 +1740,9 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
         row_data[23] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # X: メモ（日本時間）
     # W: 出品フラグは空（ユーザーが手動で入力）
 
-    # Write to specific row (A〜X列：24列)
+    # Write to specific row (A〜X列：24列のみ。はみ出し防止)
     cell_range = f"A{row_number}:X{row_number}"
-    worksheet.update(range_name=cell_range, values=[row_data])
+    worksheet.update(range_name=cell_range, values=[row_data[:24]])
 
     print(f"  [WRITE] Written to row {row_number}")
     return row_number
@@ -2986,13 +2986,12 @@ def main():
             notify_row[1] = raw_keyword  # B: キーワード
             notify_row[COL_INDEX["ステータス"]] = "完了"
             notify_row[COL_INDEX["メモ"]] = f"{notify_text} | {msg}"
-            worksheet.update(range_name=f"A{row_number}:{chr(64 + len(INPUT_SHEET_COLUMNS))}{row_number}", values=[notify_row])
+            worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row[:24]])
 
             # 黒背景・白文字・折り返しなしのフォーマットを適用
             # 注意: 色はfloat(0.0〜1.0)で指定する必要がある
             try:
-                end_col = chr(64 + len(INPUT_SHEET_COLUMNS))
-                worksheet.format(f"A{row_number}:{end_col}{row_number}", {
+                worksheet.format(f"A{row_number}:X{row_number}", {
                     "backgroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
                     "textFormat": {
                         "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},

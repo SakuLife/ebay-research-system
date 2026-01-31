@@ -101,9 +101,9 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
         row_data[23] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # X: メモ
     # W: 出品フラグは空（ユーザーが手動で入力）
 
-    # Write to specific row (A〜X列：24列)
+    # Write to specific row (A〜X列：24列のみ。はみ出し防止)
     cell_range = f"A{row_number}:X{row_number}"
-    worksheet.update(range_name=cell_range, values=[row_data])
+    worksheet.update(range_name=cell_range, values=[row_data[:24]])
 
     print(f"  [WRITE] Written to row {row_number}")
 

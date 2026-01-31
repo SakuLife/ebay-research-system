@@ -2562,18 +2562,12 @@ def main():
                     # 大手ECかどうか判定
                     is_major_ec = any(domain in src.source_url for domain in ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"])
 
-                    # 価格0の場合、または非大手ECの場合はスクレイピング（在庫チェック）
-                    need_scrape = src_price <= 0 or (not is_major_ec and src.stock_status == "")
-                    if need_scrape:
-                        scrape_reason = "価格0円" if src_price <= 0 else "在庫チェック"
-                        print(f"    [{rank}位] {src.source_site} - {scrape_reason}、スクレイピング中...")
-                        # 通常スクレイピング + Headlessフォールバック
+                    # 価格0の場合はスクレイピング（価格取得 + 在庫チェック）
+                    if src_price <= 0:
+                        print(f"    [{rank}位] {src.source_site} - 価格0円、スクレイピング中...")
                         scraped = scrape_price_with_fallback(src.source_url, src_price)
-
-                        # 在庫ステータスを更新
                         src.in_stock = scraped.in_stock
                         src.stock_status = scraped.stock_status
-
                         if scraped.success and scraped.price > 0:
                             src.source_price_jpy = scraped.price
                             src_price = scraped.price
@@ -2584,6 +2578,16 @@ def main():
                         else:
                             error_msg = scraped.error_message if scraped.error_message else "価格取得不可"
                             print(f"         → {error_msg}")
+                    elif not is_major_ec and src.stock_status == "unknown":
+                        # 非大手ECの在庫チェック（価格は既にあるのでscrape_price_for_urlで直接チェック）
+                        print(f"    [{rank}位] {src.source_site} - 在庫チェック中...")
+                        scraped = scrape_price_for_url(src.source_url)
+                        src.in_stock = scraped.in_stock
+                        src.stock_status = scraped.stock_status
+                        if not scraped.in_stock:
+                            print(f"         → 在庫切れ検出 ({src.stock_status})")
+                        else:
+                            print(f"         → 在庫OK")
 
                     # 仕入先タイトルから数量を抽出
                     source_quantity = extract_quantity_from_title(src.title, is_japanese=True)

@@ -243,6 +243,29 @@ class GoogleSheetsClient:
             print(f"  [ERROR] Please create the settings sheet first.")
             return []
 
+    def read_main_keywords(self) -> List[str]:
+        """
+        E列のメインキーワードのみ取得（修飾語との組み合わせなし）.
+
+        Returns:
+            E列のユニークなキーワードリスト
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet("設定＆キーワード")
+            col_e = worksheet.col_values(5)  # E列（1-indexed: 5）
+
+            main_keywords = []
+            for i, val in enumerate(col_e):
+                if i < 3:  # row 1-3はヘッダー・空行・セクション見出し
+                    continue
+                kw = val.strip() if val else ""
+                if kw and not kw.startswith('【') and kw not in main_keywords:
+                    main_keywords.append(kw)
+
+            return main_keywords
+        except Exception as e:
+            print(f"  [WARN] Failed to read main keywords: {e}")
+            return []
 
 
 class LocalSheetsClient:

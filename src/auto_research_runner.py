@@ -1544,6 +1544,105 @@ def get_processed_ebay_ids(sheet_client) -> set:
         return set()
 
 
+def _find_base_keyword(raw_keyword: str, main_keywords: list[str]) -> str:
+    """修飾語付きキーワードからE列の元キーワードを逆引きする."""
+    # 完全一致を先にチェック
+    if raw_keyword in main_keywords:
+        return raw_keyword
+    # 前方一致で探す（"Pokemon Japanese" → "Pokemon"）
+    for mk in main_keywords:
+        if raw_keyword.startswith(mk):
+            return mk
+    # 見つからなければraw_keywordそのものを返す
+    return raw_keyword
+
+
+def update_keyword_ranking(sheet_client, keyword_stats: dict[str, dict[str, int]]) -> None:
+    """
+    設定＆キーワードシートのH〜L列にキーワードランキングを書き込む.
+
+    既存データがあれば累積加算してランキングを更新する。
+    """
+    try:
+        worksheet = sheet_client.spreadsheet.worksheet("設定＆キーワード")
+
+        # 既存データを読み込み（H4:L100）
+        existing_data = worksheet.get("H4:L100")
+        existing_stats: dict[str, dict[str, int | str]] = {}
+
+        if existing_data:
+            for row in existing_data:
+                if not row or not row[0] or not row[0].strip():
+                    continue
+                kw = row[0].strip()
+                try:
+                    processed = int(row[2]) if len(row) > 2 and row[2] else 0
+                    output = int(row[3]) if len(row) > 3 and row[3] else 0
+                    existing_stats[kw] = {"processed": processed, "output": output}
+                except (ValueError, IndexError):
+                    existing_stats[kw] = {"processed": 0, "output": 0}
+
+        # 今回の結果をマージ（累積加算）
+        for kw, stats in keyword_stats.items():
+            if kw in existing_stats:
+                existing_stats[kw]["processed"] += stats["processed"]
+                existing_stats[kw]["output"] += stats["output"]
+            else:
+                existing_stats[kw] = {"processed": stats["processed"], "output": stats["output"]}
+
+        # 出力率を計算してソート（降順）
+        ranking = []
+        for kw, stats in existing_stats.items():
+            processed = stats["processed"]
+            output = stats["output"]
+            rate = int(output / processed * 100) if processed > 0 else 0
+            ranking.append((kw, rate, processed, output))
+
+        ranking.sort(key=lambda x: x[1], reverse=True)
+
+        # ヘッダー書き込み
+        today = datetime.now(JST).strftime("%Y-%m-%d")
+        worksheet.update(
+            range_name="H1:L1",
+            values=[["キーワード", "出力率", "処理件数", "出力件数", "更新日"]],
+        )
+        worksheet.update(
+            range_name="H3",
+            values=[["【キーワードランキング】"]],
+        )
+
+        # データ書き込み（H4以降）
+        if ranking:
+            rows = []
+            for kw, rate, processed, output in ranking:
+                rows.append([kw, f"{rate}%", processed, output, today])
+
+            end_row = 3 + len(rows)
+            worksheet.update(
+                range_name=f"H4:L{end_row}",
+                values=rows,
+                value_input_option='USER_ENTERED',
+            )
+
+            # 古いデータが残らないよう、データ範囲の下をクリア
+            clear_start = end_row + 1
+            if clear_start <= 100:
+                empty_rows = [["", "", "", "", ""]] * (100 - end_row)
+                worksheet.update(
+                    range_name=f"H{clear_start}:L100",
+                    values=empty_rows,
+                )
+
+        print(f"\n  [RANKING] キーワードランキング更新: {len(ranking)}件")
+        for i, (kw, rate, processed, output) in enumerate(ranking[:5], 1):
+            print(f"    {i}. {kw}: {rate}% ({output}/{processed})")
+        if len(ranking) > 5:
+            print(f"    ... 他{len(ranking) - 5}件")
+
+    except Exception as e:
+        print(f"  [WARN] キーワードランキング更新失敗: {e}")
+
+
 def update_sheet_headers(sheet_client) -> bool:
     """
     入力シートのヘッダー行（1行目）をチェックする（読み取り専用）.
@@ -1754,6 +1853,10 @@ def main():
 
     print(f"  [INFO] Keywords: {', '.join(keywords)}")
 
+    # E列のメインキーワードを取得（ランキング集計用）
+    main_keywords = sheets_client.read_main_keywords()
+    print(f"  [INFO] Main keywords (E列): {', '.join(main_keywords)}")
+
     # 処理済みeBay商品IDを取得（重複スキップ用）
     print(f"\n[2.5/6] Loading processed eBay item IDs...")
     processed_ebay_ids = get_processed_ebay_ids(sheets_client)
@@ -1763,6 +1866,7 @@ def main():
     total_processed = 0
     total_profitable = 0
     total_skipped = 0  # スキップ数カウント
+    keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
 
     for raw_keyword in keywords:
         # キーワードをクリーニング（日本語・括弧を除去）
@@ -2892,6 +2996,18 @@ def main():
                 print(f"  [NOTIFY] Row {row_number}: {msg} (黒背景適用)")
             except Exception as e:
                 print(f"  [NOTIFY] Row {row_number}: {msg} (フォーマット失敗: {e})")
+
+        # キーワード別集計（E列の元キーワード単位）
+        base_kw = _find_base_keyword(raw_keyword, main_keywords)
+        if base_kw:
+            if base_kw not in keyword_stats:
+                keyword_stats[base_kw] = {"processed": 0, "output": 0}
+            keyword_stats[base_kw]["processed"] += items_output_this_keyword + skipped_this_keyword
+            keyword_stats[base_kw]["output"] += items_output_this_keyword
+
+    # キーワードランキングを設定シートに書き込み
+    if keyword_stats:
+        update_keyword_ranking(sheets_client, keyword_stats)
 
     # Summary
     print(f"\n{'='*60}")

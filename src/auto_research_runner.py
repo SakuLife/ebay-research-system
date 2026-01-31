@@ -1673,16 +1673,19 @@ def update_sheet_headers(sheet_client) -> bool:
 def get_next_empty_row(sheet_client) -> int:
     """Get the next empty row number in the input sheet.
 
-    書式設定のみのセル（空文字）を無視し、実データがある最終行の次を返す。
+    V列（ステータス）を前方検索し、最初の空行を返す。
+    V列はデータ行("要確認")・通知行("完了")の両方で値があるため、
+    テーブル内の本当の空行を正確に検出できる。
     """
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
-    col_a_values = worksheet.col_values(1)
-    # 末尾から逆順に探し、実データがある最終行を見つける
-    # （書式設定で空セルが大量に返されるケース対策）
-    for i in range(len(col_a_values) - 1, -1, -1):
-        if col_a_values[i] and col_a_values[i].strip():
-            return i + 2  # i=0-indexed → row=i+1、次の行=i+2
-    return 2  # データなし → ヘッダー(row1)の次
+    # V列 = 22番目(1-indexed)。データ行・通知行の両方で値がある列
+    col_v_values = worksheet.col_values(22)
+    # ヘッダー(index 0)はスキップし、最初の空セルを探す
+    for i in range(1, len(col_v_values)):
+        if not col_v_values[i] or not col_v_values[i].strip():
+            return i + 1  # 0-indexed → 1-indexed row number
+    # 全行に値がある場合、最後の行の次
+    return len(col_v_values) + 1
 
 
 def write_result_to_spreadsheet(sheet_client, data: dict):

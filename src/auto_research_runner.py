@@ -1688,13 +1688,19 @@ def get_next_empty_row(sheet_client) -> int:
     return len(col_v_values) + 1
 
 
+def _extract_row_from_response(response: dict) -> int:
+    """append_rowのレスポンスから書き込み先の行番号を抽出する."""
+    updated_range = response.get("updates", {}).get("updatedRange", "")
+    match = re.search(r"!A(\d+):", updated_range)
+    return int(match.group(1)) if match else 0
+
+
 def write_result_to_spreadsheet(sheet_client, data: dict):
-    """Write research results to the next empty row in spreadsheet."""
+    """テーブル内に行を追加してリサーチ結果を書き込む."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
-    row_number = get_next_empty_row(sheet_client)
 
     # Prepare row data matching INPUT_SHEET_COLUMNS
-    row_data = [""] * len(INPUT_SHEET_COLUMNS)
+    row_data = [""] * 24  # A〜X列：24列固定
 
     # Map data to columns (24 columns: A-X)
     row_data[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付（日本時間）
@@ -1740,11 +1746,15 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
         row_data[23] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # X: メモ（日本時間）
     # W: 出品フラグは空（ユーザーが手動で入力）
 
-    # Write to specific row (A〜X列：24列のみ。はみ出し防止)
-    cell_range = f"A{row_number}:X{row_number}"
-    worksheet.update(range_name=cell_range, values=[row_data[:24]])
+    # テーブル内に行追加（table_range="A1"でテーブルを自動検出・拡張）
+    response = worksheet.append_row(
+        row_data,
+        value_input_option="USER_ENTERED",
+        table_range="A1",
+    )
+    row_number = _extract_row_from_response(response)
 
-    print(f"  [WRITE] Written to row {row_number}")
+    print(f"  [WRITE] Written to row {row_number} (table append)")
     return row_number
 
 
@@ -2978,15 +2988,19 @@ def main():
                 notify_text = f"これ以上該当する商品なし（{items_output_this_keyword}/{items_per_keyword}件）"
                 msg = f"{items_output_this_keyword}/{items_per_keyword}件出力、{skipped_this_keyword}件スキップ"
 
-            # 通知行を書き込み
+            # 通知行をテーブル内に追加
             worksheet = sheets_client.spreadsheet.worksheet("入力シート")
-            row_number = get_next_empty_row(sheets_client)
-            notify_row = [""] * len(INPUT_SHEET_COLUMNS)
+            notify_row = [""] * 24  # A〜X列：24列固定
             notify_row[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付
             notify_row[1] = raw_keyword  # B: キーワード
             notify_row[COL_INDEX["ステータス"]] = "完了"
             notify_row[COL_INDEX["メモ"]] = f"{notify_text} | {msg}"
-            worksheet.update(range_name=f"A{row_number}:X{row_number}", values=[notify_row[:24]])
+            response = worksheet.append_row(
+                notify_row,
+                value_input_option="USER_ENTERED",
+                table_range="A1",
+            )
+            row_number = _extract_row_from_response(response)
 
             # 黒背景・白文字・折り返しなしのフォーマットを適用
             # 注意: 色はfloat(0.0〜1.0)で指定する必要がある

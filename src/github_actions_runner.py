@@ -59,8 +59,8 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
     except Exception:
         pass  # Row doesn't exist yet, which is fine
 
-    # Prepare row data matching INPUT_SHEET_COLUMNS (24列構成: A-X)
-    row_data = [""] * len(INPUT_SHEET_COLUMNS)
+    # Prepare row data (A〜X列：24列固定)
+    row_data = [""] * 24
 
     # Map data to columns
     row_data[0] = datetime.now().strftime("%Y-%m-%d")  # A: 日付

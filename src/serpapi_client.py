@@ -226,6 +226,9 @@ class SerpApiClient:
         "etpur.com",               # アクセス不可サイト
         "e-aj.co.jp",              # 404エラーが多い
         "tenryu-site.com",         # 403 Forbiddenでアクセス不可
+        "fullress.com",            # スニーカーニュース/リリース情報ブログ（購入不可）
+        "stv.jp",                  # 札幌テレビ放送（テレビ局サイト、EC機能なし）
+        "snkrdunk.com",            # スニーカーダンク（フリマ/二次流通）
     ]
 
     # スパム/詐欺サイトによく使われるTLD（トップレベルドメイン）
@@ -1094,6 +1097,7 @@ class SerpApiClient:
             "/category/",       # カテゴリページ
             "/collections/",    # Shopify系一覧ページ（ironheart.jp等）
             "coordinate_detail",  # JINSコーディネートページ（商品ページではない）
+            "/stores/",           # Amazonストアページ（個別商品ではない）
         ]
         if any(pattern in url_lower for pattern in list_page_patterns):
             return True

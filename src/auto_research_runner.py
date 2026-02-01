@@ -1688,13 +1688,6 @@ def get_next_empty_row(sheet_client) -> int:
     return len(col_v_values) + 1
 
 
-def _extract_row_from_response(response: dict) -> int:
-    """append_rowのレスポンスから書き込み先の行番号を抽出する."""
-    updated_range = response.get("updates", {}).get("updatedRange", "")
-    match = re.search(r"!A(\d+):", updated_range)
-    return int(match.group(1)) if match else 0
-
-
 def write_result_to_spreadsheet(sheet_client, data: dict):
     """テーブル内に行を追加してリサーチ結果を書き込む."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
@@ -1746,15 +1739,12 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
         row_data[23] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # X: メモ（日本時間）
     # W: 出品フラグは空（ユーザーが手動で入力）
 
-    # テーブル内に行追加（table_range="A1"でテーブルを自動検出・拡張）
-    response = worksheet.append_row(
-        row_data,
-        value_input_option="USER_ENTERED",
-        table_range="A1",
-    )
-    row_number = _extract_row_from_response(response)
+    # insert_rowsで行を物理挿入 → テーブルが構造的に拡張される
+    # （values.update/appendではテーブル自動拡張がトリガーされない）
+    row_number = get_next_empty_row(sheet_client)
+    worksheet.insert_rows([row_data], row=row_number, value_input_option="USER_ENTERED")
 
-    print(f"  [WRITE] Written to row {row_number} (table append)")
+    print(f"  [WRITE] Inserted at row {row_number} (table insert)")
     return row_number
 
 
@@ -2995,12 +2985,8 @@ def main():
             notify_row[1] = raw_keyword  # B: キーワード
             notify_row[COL_INDEX["ステータス"]] = "完了"
             notify_row[COL_INDEX["メモ"]] = f"{notify_text} | {msg}"
-            response = worksheet.append_row(
-                notify_row,
-                value_input_option="USER_ENTERED",
-                table_range="A1",
-            )
-            row_number = _extract_row_from_response(response)
+            row_number = get_next_empty_row(sheets_client)
+            worksheet.insert_rows([notify_row], row=row_number, value_input_option="USER_ENTERED")
 
             # 黒背景・白文字・折り返しなしのフォーマットを適用
             # 注意: 色はfloat(0.0〜1.0)で指定する必要がある

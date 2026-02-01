@@ -1688,6 +1688,64 @@ def get_next_empty_row(sheet_client) -> int:
     return len(col_v_values) + 1
 
 
+def _apply_row_validation(worksheet, row_number: int) -> None:
+    """挿入行にV列プルダウンとW列プルダウンを設定する."""
+    try:
+        sheet_id = worksheet.id
+        worksheet.spreadsheet.batch_update({
+            "requests": [
+                # V列: ステータスプルダウン
+                {
+                    "setDataValidation": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": row_number - 1,
+                            "endRowIndex": row_number,
+                            "startColumnIndex": 21,  # V列 (0-indexed)
+                            "endColumnIndex": 22,
+                        },
+                        "rule": {
+                            "condition": {
+                                "type": "ONE_OF_LIST",
+                                "values": [
+                                    {"userEnteredValue": v}
+                                    for v in ["要確認", "OK", "除外", "エラー", "保留", "完了"]
+                                ],
+                            },
+                            "showCustomUi": True,
+                            "strict": False,
+                        },
+                    }
+                },
+                # W列: 出品フラグプルダウン
+                {
+                    "setDataValidation": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": row_number - 1,
+                            "endRowIndex": row_number,
+                            "startColumnIndex": 22,  # W列 (0-indexed)
+                            "endColumnIndex": 23,
+                        },
+                        "rule": {
+                            "condition": {
+                                "type": "ONE_OF_LIST",
+                                "values": [
+                                    {"userEnteredValue": v}
+                                    for v in ["出品済", "出品中", "下書き", "様子見"]
+                                ],
+                            },
+                            "showCustomUi": True,
+                            "strict": False,
+                        },
+                    }
+                },
+            ]
+        })
+    except Exception as e:
+        print(f"  [WARN] プルダウン設定失敗 (row {row_number}): {e}")
+
+
 def write_result_to_spreadsheet(sheet_client, data: dict):
     """テーブル内に行を追加してリサーチ結果を書き込む."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
@@ -1743,6 +1801,9 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     # （values.update/appendではテーブル自動拡張がトリガーされない）
     row_number = get_next_empty_row(sheet_client)
     worksheet.insert_rows([row_data], row=row_number, value_input_option="USER_ENTERED")
+
+    # 挿入行にプルダウン（V列:ステータス、W列:出品フラグ）を設定
+    _apply_row_validation(worksheet, row_number)
 
     print(f"  [WRITE] Inserted at row {row_number} (table insert)")
     return row_number
@@ -2987,6 +3048,9 @@ def main():
             notify_row[COL_INDEX["メモ"]] = f"{notify_text} | {msg}"
             row_number = get_next_empty_row(sheets_client)
             worksheet.insert_rows([notify_row], row=row_number, value_input_option="USER_ENTERED")
+
+            # 挿入行にプルダウンを設定
+            _apply_row_validation(worksheet, row_number)
 
             # 黒背景・白文字・折り返しなしのフォーマットを適用
             # 注意: 色はfloat(0.0〜1.0)で指定する必要がある

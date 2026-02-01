@@ -1,13 +1,19 @@
-"""Simple test to write data to Google Sheets."""
+"""Simple test to write data to Google Sheets.
+
+WARNING: このテストは本番スプレッドシート(検索ベース)に直接書き込みます。
+手動でのみ実行してください。
+"""
 
 import os
 from dotenv import load_dotenv
 import gspread
+import pytest
 from google.oauth2.service_account import Credentials
 
 from src.models import CandidateRow
 
 
+@pytest.mark.skip(reason="本番スプレッドシートに書き込むため、手動実行のみ")
 def test_simple_write():
     """Test simple write to Google Sheets."""
     load_dotenv()

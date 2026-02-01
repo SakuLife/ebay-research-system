@@ -1,15 +1,21 @@
-"""Test writing to 入力シート in correct format."""
+"""Test writing to 入力シート in correct format.
+
+WARNING: このテストは本番スプレッドシートに直接書き込みます。
+手動でのみ実行してください: pytest tests/test_write_input_sheet.py -v -k "write"
+"""
 
 import os
 from datetime import datetime
 from dotenv import load_dotenv
 import gspread
+import pytest
 from google.oauth2.service_account import Credentials
 
 from src.sourcing import RakutenClient
 from src.profit import calculate_profit
 
 
+@pytest.mark.skip(reason="本番スプレッドシートに書き込むため、手動実行のみ（pytest --run-write で実行）")
 def test_write_to_input_sheet():
     """Write real Rakuten data to 入力シート."""
     load_dotenv()

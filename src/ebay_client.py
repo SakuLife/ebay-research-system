@@ -528,20 +528,34 @@ class EbayClient:
         print(f"  [INFO] Using Browse API (Finding API deprecated)")
         return self.search_active_listings(keyword, market)
 
-    def find_current_lowest_price(self, keyword: str, market: str = "UK") -> Optional[Dict[str, Any]]:
+    def find_cheapest_active_listing(
+        self,
+        ebay_title: str,
+        sold_price_usd: float,
+        market: str = "UK",
+        item_location: str = "japan",
+        condition: str = "New"
+    ) -> Optional[Dict[str, Any]]:
         """
-        Find current lowest price listing for a product.
+        売済み品のタイトルをベースに、同一商品の現在最安アクティブリスティングを検索.
+
+        SerpAPIで見つけた売済み品と同一の商品が、より安い価格で
+        アクティブ出品されていないかをBrowse APIで確認する。
 
         Args:
-            keyword: Product search keyword
-            market: Market (UK, US, EU)
+            ebay_title: eBayの商品タイトル（SerpAPI売済み品）
+            sold_price_usd: 売済み品の価格（USD換算）
+            market: マーケット (UK, US, EU)
+            item_location: 出品者の所在地フィルター
+            condition: 商品状態 ("New", "Used", None)
 
         Returns:
-            Dict with item details or None if not found
+            Dict with cheapest active listing details, or None if not found
         """
+        from difflib import SequenceMatcher
+
         token = self._get_access_token()
 
-        # Market to Marketplace ID mapping
         marketplace_map = {
             "UK": "EBAY_GB",
             "US": "EBAY_US",
@@ -554,38 +568,113 @@ class EbayClient:
             "X-EBAY-C-MARKETPLACE-ID": marketplace_id
         }
 
-        # Search for current active listings
+        # フィルター構築
+        filter_parts = ["buyingOptions:{FIXED_PRICE}"]
+
+        # 商品状態フィルター
+        if condition == "New":
+            filter_parts.append("conditionIds:{1000}")
+
+        # 出品者所在地フィルター
+        location_map = {
+            "japan": "JP",
+            "us": "US",
+            "uk": "GB",
+        }
+        country_code = location_map.get(item_location.lower(), "")
+        if country_code:
+            filter_parts.append(f"itemLocationCountry:{country_code}")
+
+        # 検索クエリを最適化（タイトルが長すぎる場合は先頭部分を使用）
+        # Browse APIのqパラメータは長すぎると精度が下がる
+        search_query = ebay_title
+        if len(search_query) > 100:
+            # 先頭の重要な単語を残す（ブランド名+商品名程度）
+            words = search_query.split()
+            search_query = " ".join(words[:12])
+
         params = {
-            "q": keyword,
-            "sort": "price",  # Sort by lowest price first
-            "limit": 10
+            "q": search_query,
+            "sort": "price",  # 最安値順
+            "limit": 20,
+            "filter": ",".join(filter_parts)
         }
 
         url = f"{self.browse_url}/item_summary/search"
 
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            response = requests.get(url, headers=headers, params=params, timeout=15)
 
-            items = data.get("itemSummaries", [])
-            if not items:
-                print(f"  [INFO] No current listings found for: {keyword}")
+            if response.status_code != 200:
+                print(f"  [最安値検索] Browse API error: HTTP {response.status_code}")
                 return None
 
-            # Return the first item (lowest price)
-            lowest_item = items[0]
-            return {
-                "item_id": lowest_item.get("itemId"),
-                "title": lowest_item.get("title"),
-                "url": lowest_item.get("itemWebUrl"),
-                "price": float(lowest_item.get("price", {}).get("value", 0)),
-                "currency": lowest_item.get("price", {}).get("currency", "USD"),
-                "shipping": 0  # Browse API may not include shipping in summary
-            }
+            data = response.json()
+            items = data.get("itemSummaries", [])
+
+            if not items:
+                print(f"  [最安値検索] アクティブリスティングなし")
+                return None
+
+            # USD変換レート
+            usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
+
+            # タイトル類似度で同一商品を判定し、最安値を選択
+            ebay_title_lower = ebay_title.lower().strip()
+            best_match = None
+
+            for item in items:
+                title = item.get("title", "")
+                title_lower = title.lower().strip()
+
+                # タイトル類似度チェック（同一商品かどうか）
+                sim = SequenceMatcher(None, ebay_title_lower, title_lower).ratio()
+                if sim < 0.50:
+                    continue  # 類似度50%未満は別商品
+
+                # 価格取得
+                price_info = item.get("price", {})
+                price_local = float(price_info.get("value", 0))
+                currency = price_info.get("currency", "USD")
+                usd_rate = usd_rates.get(currency, 1.0)
+                price_usd = price_local * usd_rate
+
+                if price_usd <= 0:
+                    continue
+
+                # 送料取得
+                shipping_cost = 0.0
+                shipping_options = item.get("shippingOptions", [])
+                if shipping_options:
+                    shipping_info = shipping_options[0].get("shippingCost", {})
+                    shipping_cost = float(shipping_info.get("value", 0))
+
+                total_price_usd = price_usd + (shipping_cost * usd_rate)
+
+                item_url = item.get("itemWebUrl", "")
+                item_id = item.get("itemId", "")
+
+                if best_match is None or total_price_usd < best_match["total_price_usd"]:
+                    best_match = {
+                        "item_id": item_id,
+                        "title": title,
+                        "url": item_url,
+                        "price": price_usd,
+                        "price_local": price_local,
+                        "currency": currency,
+                        "shipping": shipping_cost,
+                        "total_price_usd": total_price_usd,
+                        "similarity": sim,
+                    }
+
+            if not best_match:
+                print(f"  [最安値検索] 同一商品のアクティブリスティングなし")
+                return None
+
+            return best_match
 
         except requests.exceptions.RequestException as e:
-            print(f"  [ERROR] Browse API search error: {e}")
+            print(f"  [最安値検索] Browse APIエラー: {e}")
             return None
 
     def create_and_publish_listing(self, request: ListingRequest) -> ListingResult:

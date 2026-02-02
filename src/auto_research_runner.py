@@ -1354,7 +1354,7 @@ class RankedSource:
 def find_top_matching_sources(
     ebay_title: str,
     sources: List[SourceOffer],
-    min_similarity: float = 0.2,
+    min_similarity: float = 0.3,
     prefer_sourcing: bool = True,
     require_price: bool = True,
     top_n: int = 3,
@@ -1374,7 +1374,7 @@ def find_top_matching_sources(
     Args:
         ebay_title: eBayの商品タイトル
         sources: 仕入先候補リスト
-        min_similarity: 最低類似度（デフォルト0.2、価格ありなら0.05まで緩和）
+        min_similarity: 最低類似度（デフォルト0.3、価格ありは0.55で判定）
         prefer_sourcing: 仕入れ可能サイトを優先するか
         require_price: 価格が必須かどうか（Trueなら価格0円は除外）
         top_n: 返す件数（デフォルト3）
@@ -1395,7 +1395,7 @@ def find_top_matching_sources(
     seen_urls = set()  # 重複URL除外用
 
     MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
-    ABSOLUTE_MIN_SIMILARITY = 0.45  # 絶対最低類似度（これ以下は完全除外）
+    ABSOLUTE_MIN_SIMILARITY = 0.55  # 絶対最低類似度（これ以下は完全除外）
 
     for source in sources:
         # 許可されていないURL（海外Amazon、PDF等）は除外
@@ -1507,7 +1507,7 @@ def find_top_matching_sources(
 def find_best_matching_source(
     ebay_title: str,
     sources: List[SourceOffer],
-    min_similarity: float = 0.2,
+    min_similarity: float = 0.3,
     prefer_sourcing: bool = True,
     require_price: bool = True
 ) -> Optional[SourceOffer]:
@@ -2255,7 +2255,7 @@ def main():
 
                     # 画像検索でも類似度チェック（誤爆防止）
                     # 画像一致でも全く関係ない商品の場合があるため
-                    MIN_IMAGE_SIMILARITY = 0.25  # 画像検索の類似度閾値
+                    MIN_IMAGE_SIMILARITY = 0.35  # 画像検索の類似度閾値
 
                     # カテゴリベースの除外チェックも適用
                     # 在庫切れ・中古のみの商品も除外
@@ -2367,7 +2367,7 @@ def main():
                                 print(f"       {src.title[:50]}...")
 
                             top_sources = find_top_matching_sources(
-                                ebay_title, all_sources, min_similarity=0.2, top_n=3,
+                                ebay_title, all_sources, min_similarity=0.3, top_n=3,
                                 category_name=category_name, condition=condition
                             )
                             if top_sources:
@@ -2381,7 +2381,7 @@ def main():
                                     skip_text_search = True
                                     print(f"    [API節約] 楽天APIで候補あり(類似度:{best_similarity_so_far:.0%}) → SerpAPI検索スキップ")
                             else:
-                                print(f"    → 類似度閾値(20%)未満のため選択なし")
+                                print(f"    → 類似度閾値(30%)未満のため選択なし")
                         else:
                             print(f"    → 有効な候補なし")
                     else:
@@ -2439,7 +2439,7 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name, condition=condition)
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.3, top_n=3, category_name=category_name, condition=condition)
                     if top_sources:
                         best_source = top_sources[0].source
                         best_similarity_so_far = top_sources[0].similarity
@@ -2451,7 +2451,7 @@ def main():
                             skip_text_search = True
                             print(f"    [API節約] 英語検索で候補あり(類似度:{best_similarity_so_far:.0%}) → 日本語検索スキップ")
                     else:
-                        print(f"    → 類似度閾値(20%)未満のため選択なし")
+                        print(f"    → 類似度閾値(30%)未満のため選択なし")
 
             # === 4. 日本語でWeb検索 ===
             if not top_sources and serpapi_client.is_enabled and not skip_text_search and japanese_query:
@@ -2504,13 +2504,13 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.2, top_n=3, category_name=category_name, condition=condition)
+                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.3, top_n=3, category_name=category_name, condition=condition)
                     if top_sources:
                         best_source = top_sources[0].source
                         search_method = "日本語検索"
                         print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
                     else:
-                        print(f"    → 類似度閾値(20%)未満のため選択なし")
+                        print(f"    → 類似度閾値(30%)未満のため選択なし")
 
             # 結果判定
             error_reason = None
@@ -2567,8 +2567,9 @@ def main():
                         else:
                             error_msg = scraped.error_message if scraped.error_message else "価格取得不可"
                             print(f"         → {error_msg}")
-                    elif not is_major_ec and src.stock_status == "unknown":
-                        # 非大手ECの在庫チェック（価格は既にあるのでscrape_price_for_urlで直接チェック）
+                    elif src.stock_status == "unknown":
+                        # 全サイト（大手EC含む）の在庫チェック
+                        # 価格があっても在庫切れの場合があるため必ず確認
                         print(f"    [{rank}位] {src.source_site} - 在庫チェック中...")
                         scraped = scrape_price_for_url(src.source_url)
                         src.in_stock = scraped.in_stock
@@ -2665,65 +2666,71 @@ def main():
                         for c in out_of_stock_candidates:
                             print(f"         - {c['ranked_src'].source.source_site}: {c['ranked_src'].source.title[:30]}...")
 
-                    # 在庫ありを優先、なければ在庫切れを使用
+                    # 在庫ありを優先、全候補在庫切れならスキップ
                     if in_stock_candidates:
                         working_pool = in_stock_candidates
                     else:
-                        print(f"\n  [WARN] 全候補が在庫切れ！最も有望な候補を使用")
-                        working_pool = out_of_stock_candidates
+                        print(f"\n  [WARN] 全候補が在庫切れ！スキップ")
+                        error_reason = "在庫切れ"
+                        best_source = None
+                        working_pool = []
 
-                    # 価格ありと価格なしで分離
-                    priced_candidates = [c for c in working_pool if c["adjusted_price"] > 0]
-                    unpriced_candidates = [c for c in working_pool if c["adjusted_price"] <= 0]
-
-                    # 価格ありを優先、なければ価格なしを使用
-                    if priced_candidates:
-                        working_candidates = priced_candidates
-                        if unpriced_candidates:
-                            print(f"\n  [INFO] 価格なし{len(unpriced_candidates)}件をスキップ、価格あり{len(priced_candidates)}件を使用")
+                    if not working_pool:
+                        # 在庫切れで空になった場合はスキップ（error_reason設定済み）
+                        pass
                     else:
-                        working_candidates = unpriced_candidates
+                        # 価格ありと価格なしで分離
+                        priced_candidates = [c for c in working_pool if c["adjusted_price"] > 0]
+                        unpriced_candidates = [c for c in working_pool if c["adjusted_price"] <= 0]
 
-                    # 数量マッチ度 × 既存スコアで再ランキング
-                    working_candidates.sort(
-                        key=lambda c: c["qty_match"] * c["ranked_src"].score,
-                        reverse=True
-                    )
-
-                    # ベスト候補を選択
-                    best_candidate = working_candidates[0]
-                    best_source = best_candidate["ranked_src"].source
-                    total_source_price = best_candidate["adjusted_price"]  # 調整後価格を使用
-                    similarity = best_candidate["ranked_src"].similarity
-                    price_note = best_candidate["price_note"]
-
-                    # 選択理由をログ出力
-                    if len(candidates_with_qty) != len(valid_candidates):
-                        excluded = len(candidates_with_qty) - len(valid_candidates)
-                        print(f"\n  [数量チェック結果] {excluded}件を除外、{len(valid_candidates)}件が有効")
-
-                    # 価格確認が必要かどうか
-                    if total_source_price <= 0:
-                        needs_price_check = True
-                        print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
-                    else:
-                        if price_note:
-                            print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f} ({price_note})")
+                        # 価格ありを優先、なければ価格なしを使用
+                        if priced_candidates:
+                            working_candidates = priced_candidates
+                            if unpriced_candidates:
+                                print(f"\n  [INFO] 価格なし{len(unpriced_candidates)}件をスキップ、価格あり{len(priced_candidates)}件を使用")
                         else:
-                            print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+                            working_candidates = unpriced_candidates
 
-                    print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
-                    print(f"  [INFO] 数量マッチ度: {best_candidate['qty_match']:.0%}")
-                    if search_method != "画像検索":
-                        print(f"  [INFO] Title similarity: {similarity:.0%}")
-                    print(f"  [INFO] URL: {best_source.source_url}")
+                        # 数量マッチ度 × 既存スコアで再ランキング
+                        working_candidates.sort(
+                            key=lambda c: c["qty_match"] * c["ranked_src"].score,
+                            reverse=True
+                        )
 
-                    # top_sourcesを有効な候補だけに更新（スプレッドシート出力用）
-                    # 価格調整済みの情報も含める
-                    top_sources = [c["ranked_src"] for c in working_candidates]
-                    # 調整後価格をsourceにも反映（スプレッドシート出力用）
-                    for c in working_candidates:
-                        c["ranked_src"].source.source_price_jpy = c["adjusted_price"]
+                        # ベスト候補を選択
+                        best_candidate = working_candidates[0]
+                        best_source = best_candidate["ranked_src"].source
+                        total_source_price = best_candidate["adjusted_price"]  # 調整後価格を使用
+                        similarity = best_candidate["ranked_src"].similarity
+                        price_note = best_candidate["price_note"]
+
+                        # 選択理由をログ出力
+                        if len(candidates_with_qty) != len(valid_candidates):
+                            excluded = len(candidates_with_qty) - len(valid_candidates)
+                            print(f"\n  [数量チェック結果] {excluded}件を除外、{len(valid_candidates)}件が有効")
+
+                        # 価格確認が必要かどうか
+                        if total_source_price <= 0:
+                            needs_price_check = True
+                            print(f"  [FOUND] via {search_method}: {best_source.source_site} - 要価格確認")
+                        else:
+                            if price_note:
+                                print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f} ({price_note})")
+                            else:
+                                print(f"  [FOUND] via {search_method}: {best_source.source_site} - JPY {total_source_price:.0f}")
+
+                        print(f"  [INFO] Source title: {best_source.title[:50]}..." if len(best_source.title) > 50 else f"  [INFO] Source title: {best_source.title}")
+                        print(f"  [INFO] 数量マッチ度: {best_candidate['qty_match']:.0%}")
+                        if search_method != "画像検索":
+                            print(f"  [INFO] Title similarity: {similarity:.0%}")
+                        print(f"  [INFO] URL: {best_source.source_url}")
+
+                        # top_sourcesを有効な候補だけに更新（スプレッドシート出力用）
+                        # 価格調整済みの情報も含める
+                        top_sources = [c["ranked_src"] for c in working_candidates]
+                        # 調整後価格をsourceにも反映（スプレッドシート出力用）
+                        for c in working_candidates:
+                            c["ranked_src"].source.source_price_jpy = c["adjusted_price"]
 
             # === Gemini検証: 仕入先が適切かチェック ===
             if best_source and not error_reason:
@@ -2746,26 +2753,43 @@ def main():
                         if validation.issues:
                             print(f"    問題: {', '.join(validation.issues)}")
 
-                        if validation.suggestion == "skip":
-                            # 明らかに別商品の場合はスキップ（スプシに書き込まない）
-                            print(f"  [Gemini検証] → 別商品のためスキップ")
-                            best_source = None  # 仕入先をクリアして書き込みをスキップ
-                            error_reason = "Gemini検証NG"
-                        elif validation.suggestion == "retry":
-                            # 次の候補を試す（現在は簡易版なのでスキップ扱い）
-                            # TODO: working_candidatesの2番目以降を試すロジック
-                            if len(working_candidates) > 1:
-                                print(f"  [Gemini検証] → 次の候補を試行（{len(working_candidates)-1}件残り）")
-                                # 2番目の候補を使用
-                                next_candidate = working_candidates[1]
-                                best_source = next_candidate["ranked_src"].source
-                                total_source_price = next_candidate["adjusted_price"]
-                                similarity = next_candidate["ranked_src"].similarity
-                                print(f"  [RETRY] {best_source.source_site} - JPY {total_source_price:.0f}")
-                            else:
-                                print(f"  [Gemini検証] → 他の候補なし、要確認（利益計算は実行）")
-                                error_reason = f"要確認: {validation.reason[:60]}"
-                                # best_source は保持して利益計算を続行
+                        if validation.suggestion in ("skip", "retry"):
+                            # skip/retryの場合、残りの候補を順番にGemini検証
+                            reason_label = "別商品" if validation.suggestion == "skip" else "要再試行"
+                            print(f"  [Gemini検証] → {reason_label}、次の候補を試行")
+
+                            found_valid = False
+                            for retry_idx in range(1, len(working_candidates)):
+                                next_candidate = working_candidates[retry_idx]
+                                next_src = next_candidate["ranked_src"].source
+                                next_price = next_candidate["adjusted_price"]
+                                print(f"  [RETRY {retry_idx}] {next_src.source_site} - JPY {next_price:.0f}")
+
+                                # 次の候補もGemini検証
+                                retry_validation = gemini_validator.validate_source_match(
+                                    ebay_title=ebay_title,
+                                    ebay_price_usd=ebay_price,
+                                    source_title=next_src.title,
+                                    source_url=next_src.source_url,
+                                    source_price_jpy=next_price,
+                                    source_site=next_src.source_site,
+                                    condition=condition
+                                )
+                                if retry_validation and retry_validation.suggestion == "accept":
+                                    print(f"  [RETRY {retry_idx}] Gemini検証OK → 採用")
+                                    best_source = next_src
+                                    total_source_price = next_price
+                                    similarity = next_candidate["ranked_src"].similarity
+                                    found_valid = True
+                                    break
+                                else:
+                                    retry_reason = retry_validation.reason[:40] if retry_validation else "検証失敗"
+                                    print(f"  [RETRY {retry_idx}] Gemini検証NG: {retry_reason}")
+
+                            if not found_valid:
+                                print(f"  [Gemini検証] → 全候補NG、スキップ")
+                                best_source = None
+                                error_reason = "Gemini検証NG"
                         # accept の場合はそのまま進む
                     else:
                         # Gemini検証失敗（APIエラー等）→ 要確認としてマーク
@@ -2898,6 +2922,72 @@ def main():
                     continue  # スプレッドシートに書き込まず、次の商品を試す
             else:
                 print(f"\n[5/5] Skipping profit calculation (no source found)")
+
+            # === eBay最安値アクティブリスティング検索 ===
+            # SerpAPIの売済みURLではなく、現在の最安アクティブリスティングを使用
+            if best_source and not error_reason and profit_no_rebate > 0:
+                print(f"\n  [最安値検索] eBay最安アクティブリスティングを検索中...")
+                try:
+                    cheapest = ebay_client.find_cheapest_active_listing(
+                        ebay_title=ebay_title,
+                        sold_price_usd=ebay_price,
+                        market=market,
+                        item_location=item_location,
+                        condition=condition
+                    )
+                    if cheapest:
+                        old_price = ebay_price
+                        new_price = cheapest["price"]
+                        new_shipping = cheapest["shipping"]
+                        new_url = cheapest["url"]
+                        sim_pct = cheapest["similarity"]
+
+                        if new_price < old_price:
+                            print(f"  [最安値検索] より安い出品を発見!")
+                            print(f"    旧: ${old_price:.2f} → 新: ${new_price:.2f} (類似度: {sim_pct:.0%})")
+                            print(f"    URL: {new_url[:80]}...")
+                        else:
+                            print(f"  [最安値検索] 最安値: ${new_price:.2f} (類似度: {sim_pct:.0%})")
+
+                        # 常にアクティブリスティングのURL/価格を使用
+                        ebay_url = new_url
+                        ebay_price = new_price
+                        ebay_shipping = new_shipping
+
+                        # 価格が変わった場合は利益を再計算
+                        if abs(new_price - old_price) > 0.01:
+                            print(f"  [最安値検索] 価格変更のため利益を再計算...")
+                            try:
+                                search_base_client.write_input_data(
+                                    source_price_jpy=total_source_price,
+                                    ebay_price_usd=new_price,
+                                    ebay_shipping_usd=new_shipping,
+                                    ebay_url=new_url,
+                                    weight_g=adjusted_weight_g,
+                                    depth_cm=adjusted_depth,
+                                    width_cm=adjusted_width,
+                                    height_cm=adjusted_height,
+                                    category_id=category_id
+                                )
+                                calc_result = search_base_client.read_calculation_results(max_wait_seconds=5)
+                                if calc_result and calc_result.get("profit_no_rebate") is not None:
+                                    profit_no_rebate = calc_result["profit_no_rebate"]
+                                    profit_margin_no_rebate = calc_result.get("margin_no_rebate", 0)
+                                    profit_with_rebate = calc_result.get("profit_with_rebate", 0)
+                                    profit_margin_with_rebate = calc_result.get("margin_with_rebate", 0)
+                                    print(f"  [最安値検索] 再計算結果: JPY {profit_no_rebate:.0f} ({profit_margin_no_rebate:.1f}%)")
+
+                                    # 再計算後に利益が最低基準を下回る場合はスキップ
+                                    if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
+                                        print(f"  [SKIP] 再計算後の利益 JPY {profit_no_rebate:.0f} < 最低 JPY {min_profit_jpy} → 次の商品へ")
+                                        skipped_this_keyword += 1
+                                        continue
+                            except Exception as e:
+                                print(f"  [WARN] 再計算失敗: {e}")
+                    else:
+                        print(f"  [最安値検索] アクティブリスティングなし（売済みURLを使用）")
+                except Exception as e:
+                    print(f"  [WARN] 最安値検索失敗: {e}（売済みURLを使用）")
 
             # Write to spreadsheet（利益がOKまたはエラー理由ありの場合のみ）
             # トップ3の仕入先を全てsourcing_resultsに追加（商品名含む）

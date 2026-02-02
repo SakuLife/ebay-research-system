@@ -1567,52 +1567,73 @@ def _find_base_keyword(raw_keyword: str, main_keywords: list[str]) -> str:
 
 def update_keyword_ranking(sheet_client, keyword_stats: dict[str, dict[str, int]]) -> None:
     """
-    設定＆キーワードシートのH〜L列にキーワードランキングを書き込む.
+    設定＆キーワードシートのH〜M列にキーワードランキングを書き込む.
 
+    キーは「キーワード|状態」形式（例: "Canon|New"）。
     既存データがあれば累積加算してランキングを更新する。
+    旧形式（状態列なし）のデータはNewとして移行する。
     """
     try:
         worksheet = sheet_client.spreadsheet.worksheet("設定＆キーワード")
 
-        # 既存データを読み込み（H4:L100）
-        existing_data = worksheet.get("H4:L100")
-        existing_stats: dict[str, dict[str, int | str]] = {}
+        # 既存データを読み込み（H4:M100 — 状態列追加済み）
+        existing_data = worksheet.get("H4:M100")
+        existing_stats: dict[str, dict[str, int]] = {}
 
         if existing_data:
             for row in existing_data:
                 if not row or not row[0] or not row[0].strip():
                     continue
-                kw = row[0].strip()
-                try:
-                    processed = int(row[2]) if len(row) > 2 and row[2] else 0
-                    output = int(row[3]) if len(row) > 3 and row[3] else 0
-                    existing_stats[kw] = {"processed": processed, "output": output}
-                except (ValueError, IndexError):
-                    existing_stats[kw] = {"processed": 0, "output": 0}
+                kw_raw = row[0].strip()
+                # 新形式: I列に状態がある場合
+                cond = ""
+                if len(row) > 1:
+                    cond = row[1].strip() if row[1] else ""
+                # 旧形式の判別: 状態列がNew/Usedでなければ旧レイアウト
+                if cond in ("New", "Used"):
+                    # 新形式: H=キーワード, I=状態, J=出力率, K=処理件数, L=出力件数, M=更新日
+                    stats_key = f"{kw_raw}|{cond}"
+                    try:
+                        processed = int(row[3]) if len(row) > 3 and row[3] else 0
+                        output = int(row[4]) if len(row) > 4 and row[4] else 0
+                    except (ValueError, IndexError):
+                        processed, output = 0, 0
+                else:
+                    # 旧形式: H=キーワード, I=出力率, J=処理件数, K=出力件数, L=更新日
+                    stats_key = f"{kw_raw}|New"
+                    try:
+                        processed = int(row[2]) if len(row) > 2 and row[2] else 0
+                        output = int(row[3]) if len(row) > 3 and row[3] else 0
+                    except (ValueError, IndexError):
+                        processed, output = 0, 0
+                existing_stats[stats_key] = {"processed": processed, "output": output}
 
         # 今回の結果をマージ（累積加算）
-        for kw, stats in keyword_stats.items():
-            if kw in existing_stats:
-                existing_stats[kw]["processed"] += stats["processed"]
-                existing_stats[kw]["output"] += stats["output"]
+        for stats_key, stats in keyword_stats.items():
+            if stats_key in existing_stats:
+                existing_stats[stats_key]["processed"] += stats["processed"]
+                existing_stats[stats_key]["output"] += stats["output"]
             else:
-                existing_stats[kw] = {"processed": stats["processed"], "output": stats["output"]}
+                existing_stats[stats_key] = {"processed": stats["processed"], "output": stats["output"]}
 
         # 出力率を計算してソート（降順）
-        ranking = []
-        for kw, stats in existing_stats.items():
+        ranking: list[tuple[str, str, int, int, int]] = []
+        for stats_key, stats in existing_stats.items():
+            parts = stats_key.split("|", 1)
+            kw = parts[0]
+            cond = parts[1] if len(parts) > 1 else "New"
             processed = stats["processed"]
             output = stats["output"]
             rate = int(output / processed * 100) if processed > 0 else 0
-            ranking.append((kw, rate, processed, output))
+            ranking.append((kw, cond, rate, processed, output))
 
-        ranking.sort(key=lambda x: x[1], reverse=True)
+        ranking.sort(key=lambda x: x[2], reverse=True)
 
         # ヘッダー書き込み
         today = datetime.now(JST).strftime("%Y-%m-%d")
         worksheet.update(
-            range_name="H1:L1",
-            values=[["キーワード", "出力率", "処理件数", "出力件数", "更新日"]],
+            range_name="H1:M1",
+            values=[["キーワード", "状態", "出力率", "処理件数", "出力件数", "更新日"]],
         )
         worksheet.update(
             range_name="H3",
@@ -1622,12 +1643,12 @@ def update_keyword_ranking(sheet_client, keyword_stats: dict[str, dict[str, int]
         # データ書き込み（H4以降）
         if ranking:
             rows = []
-            for kw, rate, processed, output in ranking:
-                rows.append([kw, f"{rate}%", processed, output, today])
+            for kw, cond, rate, processed, output in ranking:
+                rows.append([kw, cond, f"{rate}%", processed, output, today])
 
             end_row = 3 + len(rows)
             worksheet.update(
-                range_name=f"H4:L{end_row}",
+                range_name=f"H4:M{end_row}",
                 values=rows,
                 value_input_option='USER_ENTERED',
             )
@@ -1635,15 +1656,15 @@ def update_keyword_ranking(sheet_client, keyword_stats: dict[str, dict[str, int]
             # 古いデータが残らないよう、データ範囲の下をクリア
             clear_start = end_row + 1
             if clear_start <= 100:
-                empty_rows = [["", "", "", "", ""]] * (100 - end_row)
+                empty_rows = [["", "", "", "", "", ""]] * (100 - end_row)
                 worksheet.update(
-                    range_name=f"H{clear_start}:L100",
+                    range_name=f"H{clear_start}:M100",
                     values=empty_rows,
                 )
 
         print(f"\n  [RANKING] キーワードランキング更新: {len(ranking)}件")
-        for i, (kw, rate, processed, output) in enumerate(ranking[:5], 1):
-            print(f"    {i}. {kw}: {rate}% ({output}/{processed})")
+        for i, (kw, cond, rate, processed, output) in enumerate(ranking[:5], 1):
+            print(f"    {i}. {kw}({cond}): {rate}% ({output}/{processed})")
         if len(ranking) > 5:
             print(f"    ... 他{len(ranking) - 5}件")
 
@@ -3090,13 +3111,14 @@ def main():
             except Exception as e:
                 print(f"  [NOTIFY] Row {row_number}: {msg} (フォーマット失敗: {e})")
 
-        # キーワード別集計（E列の元キーワード単位）
+        # キーワード別集計（E列の元キーワード × 商品状態）
         base_kw = _find_base_keyword(raw_keyword, main_keywords)
         if base_kw:
-            if base_kw not in keyword_stats:
-                keyword_stats[base_kw] = {"processed": 0, "output": 0}
-            keyword_stats[base_kw]["processed"] += items_output_this_keyword + skipped_this_keyword
-            keyword_stats[base_kw]["output"] += items_output_this_keyword
+            stats_key = f"{base_kw}|{condition}"
+            if stats_key not in keyword_stats:
+                keyword_stats[stats_key] = {"processed": 0, "output": 0}
+            keyword_stats[stats_key]["processed"] += items_output_this_keyword + skipped_this_keyword
+            keyword_stats[stats_key]["output"] += items_output_this_keyword
 
     # キーワードランキングを設定シートに書き込み
     if keyword_stats:

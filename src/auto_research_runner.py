@@ -1001,6 +1001,8 @@ EXCLUDED_URL_PATTERNS = [
     "famitsu.com/news/",    # ニュース記事
     "dengekionline.com",
     "fullress.com",         # スニーカーニュース/リリース情報ブログ（購入不可）
+    "uptodate.tokyo",       # スニーカーニュース/リリース情報ブログ（購入不可）
+    "sneakerscout.jp",      # スニーカーニュース（購入不可）
     "stv.jp",               # テレビ局サイト（EC機能なし）
     "snkrdunk.com",         # スニーカーダンク（フリマ/二次流通）
     # 価格比較・相場サイト（仕入れ不可、購入不可）
@@ -2756,6 +2758,14 @@ def main():
                         # 調整後価格をsourceにも反映（スプレッドシート出力用）
                         for c in working_candidates:
                             c["ranked_src"].source.source_price_jpy = c["adjusted_price"]
+
+            # === 異常低価格チェック ===
+            # スクレイピングエラーで極端に安い価格が取れるケースを弾く
+            MIN_SOURCE_PRICE_JPY = 500
+            if best_source and not error_reason and 0 < total_source_price < MIN_SOURCE_PRICE_JPY:
+                print(f"  [SKIP] 仕入値 JPY {total_source_price:.0f} が最低基準 JPY {MIN_SOURCE_PRICE_JPY} 未満 → 価格取得ミスの可能性")
+                best_source = None
+                error_reason = "価格取得ミス"
 
             # === Gemini検証: 仕入先が適切かチェック ===
             if best_source and not error_reason:

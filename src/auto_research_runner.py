@@ -1028,6 +1028,9 @@ EXCLUDED_URL_PATTERNS = [
     # Etsy（カスタム品・ハンドメイドが多く仕入先として不適切）
     "etsy.com",
     "etsy.jp",
+    # スパム系TLD・海外不明サイト
+    ".sale/",             # スパムサイトに多いTLD
+    "tsavoequipment.com", # 海外機器サイト（日本の仕入先ではない）
 ]
 
 
@@ -1066,6 +1069,7 @@ def is_allowed_source_url(url: str) -> bool:
         "/list/", "/browse/",    # 一覧ページ
         "/item_list/", "/item_list?",  # 商品一覧ページ（vector-parkなど）
         "/tag/", "/tags/",       # タグページ
+        "search-showajax",       # Salesforce Commerce Cloud AJAX検索
         "/products-banner",      # WooCommerceバナー/アーカイブページ
         "/product-category/",    # WooCommerceカテゴリページ
         "/shop/page/",           # WooCommerceショップページネーション

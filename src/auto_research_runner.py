@@ -1968,6 +1968,7 @@ def main():
     total_profitable = 0
     total_skipped = 0  # スキップ数カウント
     keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
+    processed_source_urls: set[str] = set()  # 仕入先URL重複チェック用
 
     for raw_keyword in keywords:
         # タイムアウトチェック（キーワードループ先頭）
@@ -2883,6 +2884,10 @@ def main():
             if best_source and needs_price_check:
                 print(f"\n[5/5] Skipping profit calculation (price confirmation needed)")
                 error_reason = "要価格確認"
+            elif best_source and best_source.source_url in processed_source_urls:
+                print(f"\n[5/5] Skipping (同一仕入先URL既出): {best_source.source_url[:80]}")
+                best_source = None
+                error_reason = "仕入先URL重複"
             elif best_source:
                 print(f"\n[5/5] Calculating profit...")
 
@@ -2971,6 +2976,9 @@ def main():
                     error_reason = f"計算エラー: {str(e)[:30]}"
 
                 print(f"  [INFO] Profit (no rebate): JPY {profit_no_rebate:.0f} ({profit_margin_no_rebate:.1f}%)")
+
+                # 仕入先URLを処理済みに登録（赤字でも同じURLの再計算を防止）
+                processed_source_urls.add(best_source.source_url)
 
                 # Check if profit meets minimum threshold
                 if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:

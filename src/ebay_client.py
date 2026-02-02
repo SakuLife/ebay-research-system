@@ -616,12 +616,15 @@ class EbayClient:
                 print(f"  [最安値検索] アクティブリスティングなし")
                 return None
 
+            print(f"  [最安値検索] {len(items)}件の候補を検索")
+
             # USD変換レート
             usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
 
             # タイトル類似度で同一商品を判定し、最安値を選択
             ebay_title_lower = ebay_title.lower().strip()
             best_match = None
+            skipped_low_sim = 0
 
             for item in items:
                 title = item.get("title", "")
@@ -630,6 +633,7 @@ class EbayClient:
                 # タイトル類似度チェック（同一商品かどうか）
                 sim = SequenceMatcher(None, ebay_title_lower, title_lower).ratio()
                 if sim < 0.50:
+                    skipped_low_sim += 1
                     continue  # 類似度50%未満は別商品
 
                 # 価格取得
@@ -668,9 +672,10 @@ class EbayClient:
                     }
 
             if not best_match:
-                print(f"  [最安値検索] 同一商品のアクティブリスティングなし")
+                print(f"  [最安値検索] 同一商品のアクティブリスティングなし（類似度50%未満: {skipped_low_sim}件）")
                 return None
 
+            print(f"  [最安値検索] 最安: ${best_match['total_price_usd']:.2f} (類似度{best_match['similarity']:.0%}) item={best_match['item_id']}")
             return best_match
 
         except requests.exceptions.RequestException as e:

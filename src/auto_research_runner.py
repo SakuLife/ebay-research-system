@@ -1031,6 +1031,8 @@ EXCLUDED_URL_PATTERNS = [
     # スパム系TLD・海外不明サイト
     ".sale/",             # スパムサイトに多いTLD
     "tsavoequipment.com", # 海外機器サイト（日本の仕入先ではない）
+    # プレスリリース・PR配信（購入不可）
+    "prtimes.jp",
 ]
 
 

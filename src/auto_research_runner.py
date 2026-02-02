@@ -1063,6 +1063,10 @@ def is_allowed_source_url(url: str) -> bool:
         "/list/", "/browse/",    # 一覧ページ
         "/item_list/", "/item_list?",  # 商品一覧ページ（vector-parkなど）
         "/tag/", "/tags/",       # タグページ
+        "/products-banner",      # WooCommerceバナー/アーカイブページ
+        "/product-category/",    # WooCommerceカテゴリページ
+        "/shop/page/",           # WooCommerceショップページネーション
+        "/collections/",         # Shopifyコレクションページ
     ]
     for pattern in search_page_patterns:
         if pattern in url_lower:

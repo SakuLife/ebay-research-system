@@ -3111,7 +3111,6 @@ def main():
 
             # Rate limit protection: wait 2 seconds between items
             # Google Sheets API limit is 60 writes/minute
-            import time
             time.sleep(2)
 
         # キーワードで有効な出力がなかった場合 or 目標件数未達の場合、通知行を出力

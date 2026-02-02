@@ -4,6 +4,7 @@ import argparse
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -1848,6 +1849,11 @@ def main():
     print(f"eBay AUTO RESEARCH PIPELINE (Pattern②)")
     print(f"="*60)
 
+    # タイムアウト管理（GitHub Actions 30分制限に対する安全マージン）
+    pipeline_start_time = time.time()
+    MAX_RUNTIME_SECONDS = 25 * 60  # 25分で処理を切り上げ（残り5分をクリーンアップに確保）
+    timeout_reached = False
+
     # SerpAPI使用履歴を追跡
     serpapi_usage_log = []
 
@@ -1964,6 +1970,15 @@ def main():
     keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
 
     for raw_keyword in keywords:
+        # タイムアウトチェック（キーワードループ先頭）
+        elapsed = time.time() - pipeline_start_time
+        if elapsed >= MAX_RUNTIME_SECONDS:
+            remaining_kw = len(keywords) - keywords.index(raw_keyword)
+            print(f"\n[TIMEOUT] 経過時間 {elapsed/60:.1f}分 >= 制限 {MAX_RUNTIME_SECONDS/60:.0f}分")
+            print(f"  残り {remaining_kw} キーワードをスキップしてクリーンアップに移行します")
+            timeout_reached = True
+            break
+
         # キーワードをクリーニング（日本語・括弧を除去）
         keyword = clean_keyword_for_ebay(raw_keyword)
         if not keyword:
@@ -2056,6 +2071,13 @@ def main():
         for item in active_items:
             # 出力目標に達したら終了
             if items_output_this_keyword >= items_per_keyword:
+                break
+
+            # タイムアウトチェック（アイテムループ先頭）
+            elapsed = time.time() - pipeline_start_time
+            if elapsed >= MAX_RUNTIME_SECONDS:
+                print(f"\n  [TIMEOUT] 経過時間 {elapsed/60:.1f}分 → このキーワードの処理を中断")
+                timeout_reached = True
                 break
             ebay_url = item.ebay_item_url
             ebay_price = item.ebay_price
@@ -3142,17 +3164,27 @@ def main():
             keyword_stats[stats_key]["processed"] += items_output_this_keyword + skipped_this_keyword
             keyword_stats[stats_key]["output"] += items_output_this_keyword
 
-    # キーワードランキングを設定シートに書き込み
+        # アイテムループでタイムアウトした場合、キーワードループも抜ける
+        if timeout_reached:
+            break
+
+    # キーワードランキングを設定シートに書き込み（タイムアウト時も必ず実行）
     if keyword_stats:
         update_keyword_ranking(sheets_client, keyword_stats)
 
     # Summary
+    total_elapsed = time.time() - pipeline_start_time
     print(f"\n{'='*60}")
-    print(f"AUTO RESEARCH COMPLETED")
+    if timeout_reached:
+        print(f"AUTO RESEARCH COMPLETED (TIMEOUT - {total_elapsed/60:.1f}分経過)")
+    else:
+        print(f"AUTO RESEARCH COMPLETED ({total_elapsed/60:.1f}分)")
     print(f"{'='*60}")
     print(f"Total processed: {total_processed}")
     print(f"Skipped (already in sheet): {total_skipped}")
     print(f"Profitable items: {total_profitable}")
+    if timeout_reached:
+        print(f"*** タイムアウトにより一部キーワード未処理 ***")
 
     # SerpAPI使用履歴サマリー
     if serpapi_usage_log:

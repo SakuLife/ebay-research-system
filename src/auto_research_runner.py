@@ -2966,6 +2966,13 @@ def main():
                         new_shipping = cheapest["shipping"]
                         new_url = cheapest["url"]
                         sim_pct = cheapest["similarity"]
+                        new_item_id = cheapest.get("item_id", "")
+
+                        # 重複チェック: 同一アクティブリスティングが既に処理済みならスキップ
+                        if new_item_id and new_item_id in processed_ebay_ids:
+                            print(f"  [最安値検索] Item {new_item_id} は既に処理済み → スキップ")
+                            skipped_this_keyword += 1
+                            continue
 
                         if new_price < old_price:
                             print(f"  [最安値検索] より安い出品を発見!")
@@ -3056,6 +3063,11 @@ def main():
             items_output_this_keyword += 1  # このキーワードで処理した件数
             if ebay_title:
                 output_ebay_titles.append(ebay_title)  # 重複検出用に記録
+
+            # 書き込んだeBay Item IDを処理済みに追加（最安値検索で同一リスティングへの重複書き込みを防止）
+            written_item_id = re.search(r'/itm/(\d+)', ebay_url)
+            if written_item_id:
+                processed_ebay_ids.add(written_item_id.group(1))
 
             if profit_no_rebate > 0 and not error_reason:
                 total_profitable += 1

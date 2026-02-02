@@ -2128,6 +2128,38 @@ def main():
 
         if not active_items:
             print(f"  [WARN] No eBay listings found for '{keyword}'")
+
+            # 入力シートに通知行を書き込み
+            worksheet = sheets_client.spreadsheet.worksheet("入力シート")
+            notify_row = [""] * 24
+            notify_row[0] = now_jst().strftime("%Y-%m-%d")
+            notify_row[1] = raw_keyword
+            notify_row[4] = condition
+            notify_row[5] = "eBay検索結果なし"
+            notify_row[COL_INDEX["ステータス"]] = "完了"
+            notify_row[COL_INDEX["メモ"]] = "eBay検索結果なし（Sold/Active共に0件）"
+            row_number = get_next_empty_row(sheets_client)
+            worksheet.insert_rows([notify_row], row=row_number, value_input_option="USER_ENTERED")
+            _apply_row_validation(worksheet, row_number)
+            try:
+                worksheet.format(f"A{row_number}:X{row_number}", {
+                    "backgroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
+                    "textFormat": {
+                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                        "bold": True
+                    },
+                    "wrapStrategy": "OVERFLOW_CELL"
+                })
+                print(f"  [NOTIFY] Row {row_number}: eBay検索結果なし (黒背景適用)")
+            except Exception as e:
+                print(f"  [NOTIFY] Row {row_number}: eBay検索結果なし (フォーマット失敗: {e})")
+
+            # 設定シートのキーワードランキングにも記録
+            base_kw = _find_base_keyword(raw_keyword, main_keywords)
+            if base_kw:
+                stats_key = f"{base_kw}|{condition}"
+                if stats_key not in keyword_stats:
+                    keyword_stats[stats_key] = {"processed": 0, "output": 0}
             continue
 
         # 出力目標: items_per_keyword 件をスプレッドシートに出力

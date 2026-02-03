@@ -1040,6 +1040,7 @@ EXCLUDED_URL_PATTERNS = [
     "prtimes.jp",
     # 公式サイト・メーカーサイト（直接購入不可、小売サイトではない）
     "pokemongoplusplus.com",  # Pokemon GO Plus+公式サイト
+    "onepiece-base.com",      # ワンピース公式ショップ（小売購入不可）
 ]
 
 
@@ -2470,11 +2471,12 @@ def main():
                         search_method = "画像検索"
 
                         # === SerpAPI節約: Lens成功時の早期終了 ===
-                        # 類似度40%以上かつ価格ありなら、後続検索をスキップ
-                        LENS_SKIP_THRESHOLD = 0.40
+                        # 類似度60%以上かつ価格ありなら、後続検索をスキップ
+                        # ※40%だと誤爆が多い（画像類似でもタイトル全然違う商品を選んでしまう）
+                        LENS_SKIP_THRESHOLD = 0.60
                         if best_sim >= LENS_SKIP_THRESHOLD and best_source.source_price_jpy > 0:
                             skip_text_search = True
-                            print(f"    [API節約] 画像検索で良好な候補あり → テキスト検索スキップ")
+                            print(f"    [API節約] 画像検索で良好な候補あり(類似度{best_sim:.0%}) → テキスト検索スキップ")
                     else:
                         print(f"    → 類似度閾値({MIN_IMAGE_SIMILARITY:.0%})未満のため選択なし、次のステップへ")
                 else:

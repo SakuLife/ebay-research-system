@@ -999,7 +999,8 @@ EXCLUDED_URL_PATTERNS = [
     "gizmodo.jp",
     "engadget.com",
     "4gamer.net",
-    "famitsu.com/news/",    # ニュース記事
+    "famitsu.com",          # ゲームニュース/記事サイト（購入不可）
+    "game.watch.impress.co.jp",  # ゲームニュース（購入不可）
     "dengekionline.com",
     "fullress.com",         # スニーカーニュース/リリース情報ブログ（購入不可）
     "uptodate.tokyo",       # スニーカーニュース/リリース情報ブログ（購入不可）
@@ -1030,9 +1031,15 @@ EXCLUDED_URL_PATTERNS = [
     "etsy.jp",
     # スパム系TLD・海外不明サイト
     ".sale/",             # スパムサイトに多いTLD
+    ".click/",            # スパムサイトに多いTLD
+    ".click?",            # スパムサイトに多いTLD（クエリ付き）
     "tsavoequipment.com", # 海外機器サイト（日本の仕入先ではない）
+    "rcsolutionspty.com", # スパム/リダイレクトサイト
+    "ilikesecbcd",        # スパムサイト
     # プレスリリース・PR配信（購入不可）
     "prtimes.jp",
+    # 公式サイト・メーカーサイト（直接購入不可、小売サイトではない）
+    "pokemongoplusplus.com",  # Pokemon GO Plus+公式サイト
 ]
 
 
@@ -2497,6 +2504,16 @@ def main():
                     rakuten_offers = rakuten_client.search_multiple(japanese_query, max_results=10)
                     print(f"    結果: {len(rakuten_offers)}件")
 
+                    # 0件で長いクエリの場合、キーワードを減らしてリトライ
+                    if not rakuten_offers:
+                        words = japanese_query.split()
+                        if len(words) > 4:
+                            # 先頭4語に短縮してリトライ
+                            short_query = " ".join(words[:4])
+                            print(f"    [リトライ] クエリ短縮: {short_query}")
+                            rakuten_offers = rakuten_client.search_multiple(short_query, max_results=10)
+                            print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
+
                     if rakuten_offers:
                         all_sources = []
                         for offer in rakuten_offers:
@@ -3111,7 +3128,12 @@ def main():
                         new_shipping = cheapest["shipping"]
                         new_url = cheapest["url"]
                         sim_pct = cheapest["similarity"]
-                        new_item_id = cheapest.get("item_id", "")
+                        new_item_id_raw = cheapest.get("item_id", "")
+                        # Browse APIのitemIdは "v1|123456|0" 形式なので数値部分を抽出
+                        new_item_id = new_item_id_raw
+                        if "|" in new_item_id_raw:
+                            parts = new_item_id_raw.split("|")
+                            new_item_id = parts[1] if len(parts) >= 2 else new_item_id_raw
 
                         # 重複チェック: 同一アクティブリスティングが既に処理済みならスキップ
                         if new_item_id and new_item_id in processed_ebay_ids:

@@ -879,7 +879,12 @@ class PriceScraper:
             if re.search(pattern, html, re.IGNORECASE):
                 return (True, "in_stock")
 
-        # 判定不能
+        # Bot対策・Shopify等でHTMLに商品情報が含まれていない場合
+        has_title = bool(re.search(r'<title[^>]*>.+?</title>', html, re.IGNORECASE | re.DOTALL))
+        if not has_title:
+            return (False, "no_product_info")
+
+        # 判定不能（商品ページだが在庫パターンなし → 在庫ありと仮定）
         return (True, "unknown")
 
 

@@ -222,6 +222,47 @@ class GeminiClient:
             print(f"  [WARN] Gemini extraction failed: {e}")
             return None
 
+    def extract_essential_keywords(self, full_query: str, max_keywords: int = 4) -> Optional[str]:
+        """
+        長い検索クエリから楽天検索に必須なキーワードを抽出する.
+
+        Geminiに判定させ、商品特定に必要最低限のキーワードのみを返す。
+
+        Args:
+            full_query: 元の検索クエリ（日本語）
+            max_keywords: 最大キーワード数
+
+        Returns:
+            短縮された検索クエリ。失敗時はNone。
+        """
+        if not self.is_enabled:
+            return None
+
+        prompt = f'''以下の日本語検索クエリから、楽天市場で商品を見つけるために最も重要なキーワードを{max_keywords}個以内で選んでください。
+
+ルール:
+- 商品を特定するのに必須なキーワードのみ選ぶ
+- ブランド名・商品カテゴリ・特徴的な固有名詞を優先
+- 一般的すぎる語（「ポケモンセンター」「オリジナル」「Japan」「New」等）は除外
+- スペース区切りで出力、説明不要
+
+クエリ: {full_query}
+
+必須キーワード:'''
+
+        try:
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            result = ' '.join(result.split())
+            _log_gemini_call("extract_keywords", len(prompt) // 4, len(result) // 4)
+            # 空の結果やクエリより長い結果は無効
+            if not result or len(result) >= len(full_query):
+                return None
+            return result
+        except Exception as e:
+            print(f"  [WARN] Gemini keyword extraction failed: {e}")
+            return None
+
     def research_product_weight(self, product_title: str, product_url: str = "") -> Optional['WeightResearchResult']:
         """
         商品のサイズ・重量を調査する.

@@ -2504,15 +2504,17 @@ def main():
                     rakuten_offers = rakuten_client.search_multiple(japanese_query, max_results=10)
                     print(f"    結果: {len(rakuten_offers)}件")
 
-                    # 0件で長いクエリの場合、キーワードを減らしてリトライ
+                    # 0件で長いクエリの場合、Geminiで必須キーワードを抽出してリトライ
                     if not rakuten_offers:
                         words = japanese_query.split()
                         if len(words) > 4:
-                            # 先頭4語に短縮してリトライ
-                            short_query = " ".join(words[:4])
-                            print(f"    [リトライ] クエリ短縮: {short_query}")
-                            rakuten_offers = rakuten_client.search_multiple(short_query, max_results=10)
-                            print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
+                            gemini_for_kw = GeminiClient()
+                            if gemini_for_kw.is_enabled:
+                                short_query = gemini_for_kw.extract_essential_keywords(japanese_query, max_keywords=4)
+                                if short_query:
+                                    print(f"    [リトライ] Gemini必須KW: {short_query}")
+                                    rakuten_offers = rakuten_client.search_multiple(short_query, max_results=10)
+                                    print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
 
                     if rakuten_offers:
                         all_sources = []

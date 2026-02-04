@@ -2322,8 +2322,8 @@ def main():
             # Step 4: Search domestic sources (3段階検索 - 日本国内サイト限定)
             # 1. 楽天API（無料・高速）→ 見つかればLensスキップ
             # 2. Google Lens画像検索（SerpAPI消費）
-            # 3. 日本語でWeb検索
-            # ※英語Web検索は成功率0%のため削除
+            # 3. 英語でWeb検索（日本向け）
+            # ※日本語Web検索は成功率2%のため削除（英語の方が11%で高い）
 
             print(f"\n[4/5] Searching domestic sources...")
 
@@ -2581,16 +2581,17 @@ def main():
                 else:
                     print(f"    → 有効な仕入先なし、次のステップへ")
 
-            # === 4. 日本語でWeb検索 ===
-            # ※英語Web検索は成功率0%のため削除（57 calls節約）
-            if not top_sources and serpapi_client.is_enabled and not skip_text_search and japanese_query:
-                print(f"  [Step 4] Web検索 (日本語)")
-                print(f"    検索クエリ: {japanese_query}")
+            # === 4. 英語でWeb検索（日本向け）===
+            # ※日本語Web検索は成功率2%のため削除（Web EN: 11%）
+            if not top_sources and serpapi_client.is_enabled and ebay_title and not skip_text_search and not skip_lens_and_en:
+                cleaned_query = clean_query_for_shopping(ebay_title)
+                print(f"  [Step 4] Web検索 (英語/日本向け)")
+                print(f"    整形後: {cleaned_query[:60]}...")
                 web_condition = "new" if condition == "New" else "used"
                 print(f"    Condition: {web_condition}")
 
-                web_results = serpapi_client.search_google_web_jp(japanese_query, condition=web_condition, max_results=10)
-                log_serpapi_call("Web(JP)", japanese_query, len(web_results))
+                web_results = serpapi_client.search_google_web_jp(cleaned_query, condition=web_condition, max_results=10)
+                log_serpapi_call("Web(EN)", cleaned_query, len(web_results))
 
                 all_sources = []
                 for shop_item in web_results:
@@ -2636,7 +2637,7 @@ def main():
                     top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.3, top_n=3, category_name=category_name, condition=condition)
                     if top_sources:
                         best_source = top_sources[0].source
-                        search_method = "日本語検索"
+                        search_method = "英語検索"
                         print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
                     else:
                         print(f"    → 類似度閾値(30%)未満のため選択なし")

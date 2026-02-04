@@ -641,10 +641,39 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
    - 型番や商品コードがない衣類
    - 検索しても同一商品が見つからない可能性が高い服
 
+10. 海外限定・輸入転売品（import_only）
+   - 日本未発売の海外限定商品
+   - 海外ディズニーパーク限定グッズ
+   - 米国版、EU版など地域限定リリース
+   - 「US exclusive」「Disney Parks」「import」等の表記
+   - 日本のAmazon/楽天では入手不可能な商品
+
+11. コレクター向け希少品（collector）
+   - eBayでしか流通していない希少アイテム
+   - コレクター市場でのみ取引される商品
+   - 画像が明らかに中古/ユーズド感がある（箱なし、開封済み）
+   - 一般小売店で新品購入できない商品
+   - 型番がなく、同一商品を検索で見つけることが困難
+
+12. 手作り・カスタム品（handmade）
+   - ハンドメイド、手作り品
+   - カスタムペイント、リペイント品
+   - 改造品、モディファイ品
+   - 個人制作の一点物
+
+【重要な判断基準】
+「この商品は日本のAmazon・楽天・Yahooショッピングで新品として購入できるか？」
+→ NOならスキップすべき。特に以下の場合はNO:
+- 型番/商品コードがなく検索困難
+- 海外限定品
+- コレクター向け希少品
+- 10年以上前の古い商品
+- 一般流通していない商品
+
 【出力形式】必ずこの形式で出力:
 SKIP: [YES/NO]
 REASON: [スキップ理由。スキップ不要なら「なし」]
-TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/production/apparel/figure/toy/other]
+TYPE: [card/lottery/set/promo/mismatch/vintage/custom_set/production/apparel/import_only/collector/handmade/figure/toy/other]
 CONFIDENCE: [high/medium/low]
 DETAILS: [画像から読み取った詳細（1行）]
 

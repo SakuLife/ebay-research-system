@@ -1041,6 +1041,10 @@ EXCLUDED_URL_PATTERNS = [
     # 公式サイト・メーカーサイト（直接購入不可、小売サイトではない）
     "pokemongoplusplus.com",  # Pokemon GO Plus+公式サイト
     "onepiece-base.com",      # ワンピース公式ショップ（小売購入不可）
+    # 買取サイト（売却用、仕入れ不可）
+    "kaitori",                # 買取系サイト全般
+    "買取",                   # 買取系サイト（日本語URL）
+    "satei",                  # 査定サイト
 ]
 
 

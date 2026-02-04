@@ -1930,9 +1930,9 @@ def main():
     print(f"eBay AUTO RESEARCH PIPELINE (Pattern②)")
     print(f"="*60)
 
-    # タイムアウト管理（GitHub Actions 30分制限に対する安全マージン）
+    # タイムアウト管理（長時間実行対応）
     pipeline_start_time = time.time()
-    MAX_RUNTIME_SECONDS = 25 * 60  # 25分で処理を切り上げ（残り5分をクリーンアップに確保）
+    MAX_RUNTIME_SECONDS = 6 * 60 * 60  # 6時間（GitHub Actions上限）
     timeout_reached = False
 
     # SerpAPI使用履歴を追跡
@@ -2047,7 +2047,16 @@ def main():
     # Step 2-5: Process each keyword
     total_processed = 0
     total_profitable = 0
-    total_skipped = 0  # スキップ数カウント
+    # スキップ理由別カウント
+    skip_reasons: dict[str, int] = {
+        "already_processed": 0,  # スプシに既存
+        "out_of_stock": 0,       # 在庫切れ
+        "negative_profit": 0,    # 利益マイナス
+        "no_source": 0,          # 仕入先なし
+        "gemini_reject": 0,      # Gemini検証NG
+        "limited_product": 0,    # 限定品/プロモ
+        "other": 0,              # その他
+    }
     keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
     processed_source_urls: set[str] = set()  # 仕入先URL重複チェック用
 
@@ -2220,7 +2229,7 @@ def main():
             # 処理済みならスキップ
             if ebay_item_id and ebay_item_id in processed_ebay_ids:
                 print(f"\n  [SKIP] Already processed: {ebay_item_id}")
-                total_skipped += 1
+                skip_reasons["already_processed"] += 1
                 skipped_this_keyword += 1
                 continue
 
@@ -2237,7 +2246,7 @@ def main():
                         is_dup = True
                         break
                 if is_dup:
-                    total_skipped += 1
+                    skip_reasons["other"] += 1
                     skipped_this_keyword += 1
                     continue
 
@@ -2246,7 +2255,7 @@ def main():
             if is_limited:
                 print(f"\n  [SKIP] Limited/Premium product detected: '{limited_keyword}'")
                 print(f"         Title: {ebay_title[:60]}...")
-                total_skipped += 1
+                skip_reasons["limited_product"] += 1
                 skipped_this_keyword += 1
                 continue
 
@@ -2260,7 +2269,7 @@ def main():
                 is_graded = any(kw in ebay_title_lower for kw in graded_keywords)
                 if is_graded:
                     print(f"\n  [SKIP] Graded/PSA item (not New): {ebay_title[:50]}...")
-                    total_skipped += 1
+                    skip_reasons["limited_product"] += 1
                     skipped_this_keyword += 1
                     continue
 
@@ -2272,7 +2281,7 @@ def main():
                 if category_id in card_category_ids:
                     print(f"\n  [SKIP] Card category (hard to source new): {category_name}")
                     print(f"         Title: {ebay_title[:50]}...")
-                    total_skipped += 1
+                    skip_reasons["limited_product"] += 1
                     skipped_this_keyword += 1
                     continue
 
@@ -2294,7 +2303,7 @@ def main():
                         print(f"\n  [SKIP] Gemini image analysis: {image_analysis.skip_reason}")
                         print(f"         Type: {image_analysis.product_type} (confidence: {image_analysis.confidence})")
                         print(f"         Title: {ebay_title[:50]}...")
-                        total_skipped += 1
+                        skip_reasons["limited_product"] += 1
                         skipped_this_keyword += 1
                         continue
 
@@ -2306,10 +2315,11 @@ def main():
             if image_url:
                 print(f"  [INFO] Image: {image_url[:60]}...")
 
-            # Step 4: Search domestic sources (3段階検索 - 日本国内サイト限定)
-            # 1. Google Lens画像検索（最も精度が高い）
-            # 2. 英語のままでGoogle Shopping検索（日本向け）
-            # 3. 日本語に翻訳してGoogle Shopping検索
+            # Step 4: Search domestic sources (4段階検索 - 日本国内サイト限定)
+            # 1. 楽天API（無料・高速）→ 見つかればLensスキップ
+            # 2. Google Lens画像検索（SerpAPI消費）
+            # 3. 英語でWeb検索（日本向け）
+            # 4. 日本語でWeb検索
 
             print(f"\n[4/5] Searching domestic sources...")
 
@@ -2338,9 +2348,94 @@ def main():
                 skip_lens_and_en = True
                 print(f"  [API節約] 日本アパレルブランド検出 → Lens/EN検索スキップ、JP検索へ")
 
-            # === 1. Google Lens画像検索 ===
-            if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en:
-                print(f"  [Step 1] Google Lens画像検索")
+            # === 1. Gemini翻訳（楽天API用に先に実行）===
+            japanese_query = None
+            if ebay_title:
+                cleaned_title = clean_query_for_shopping(ebay_title)
+                gemini_client = GeminiClient()
+                if gemini_client.is_enabled and cleaned_title:
+                    japanese_query = gemini_client.translate_product_name(cleaned_title)
+                    if japanese_query:
+                        print(f"  [Step 1] Gemini翻訳: {japanese_query}")
+                    else:
+                        print(f"  [Step 1] Gemini翻訳失敗")
+                if not japanese_query:
+                    japanese_query = extract_search_keywords(ebay_title) if ebay_title else keyword
+                    print(f"  [Step 1] フォールバック（型番抽出）: {japanese_query}")
+
+            # === 2. 楽天API検索（SerpAPIコスト: 0、最優先）===
+            skip_lens = False  # 楽天で見つかったらLensスキップ
+            if japanese_query:
+                rakuten_client = sourcing_client.rakuten_client
+                if rakuten_client and rakuten_client.is_enabled:
+                    print(f"  [Step 2] 楽天API検索 (コスト0)")
+                    print(f"    検索クエリ: {japanese_query}")
+                    rakuten_offers = rakuten_client.search_multiple(japanese_query, max_results=10)
+                    print(f"    結果: {len(rakuten_offers)}件")
+
+                    # 0件で長いクエリの場合、Geminiで必須キーワードを抽出してリトライ
+                    if not rakuten_offers:
+                        words = japanese_query.split()
+                        if len(words) > 4:
+                            gemini_for_kw = GeminiClient()
+                            if gemini_for_kw.is_enabled:
+                                short_query = gemini_for_kw.extract_essential_keywords(japanese_query, max_keywords=4)
+                                if short_query:
+                                    print(f"    [リトライ] Gemini必須KW: {short_query}")
+                                    rakuten_offers = rakuten_client.search_multiple(short_query, max_results=10)
+                                    print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
+
+                    if rakuten_offers:
+                        rakuten_sources = []
+                        for offer in rakuten_offers:
+                            if offer.source_price_jpy > 0:
+                                if not is_valid_source_for_condition(offer.source_site, offer.source_url, condition):
+                                    continue
+                                rakuten_sources.append(offer)
+
+                        if rakuten_sources:
+                            print(f"    --- 候補一覧 (スコア順) ---")
+                            scored_sources = []
+                            for src in rakuten_sources:
+                                sim = calculate_title_similarity(ebay_title, src.title)
+                                cond_score = calculate_condition_score(src.title, src.source_site)
+                                prio = calculate_source_priority(src.source_site)
+                                total = sim * cond_score * prio
+                                scored_sources.append((src, sim, cond_score, prio, total))
+                            scored_sources.sort(key=lambda x: x[4], reverse=True)
+
+                            for i, (src, sim, cond_score, prio, total) in enumerate(scored_sources[:5]):
+                                print(f"    {i+1}. [{src.source_site}] JPY {src.source_price_jpy:,.0f}")
+                                print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f} = {total:.2f}")
+                                print(f"       {src.title[:50]}...")
+
+                            rakuten_top = find_top_matching_sources(
+                                ebay_title, rakuten_sources, min_similarity=0.30, top_n=3,
+                                category_name=category_name, condition=condition
+                            )
+                            if rakuten_top:
+                                top_sources = rakuten_top
+                                best_source = top_sources[0].source
+                                best_similarity_so_far = top_sources[0].similarity
+                                search_method = "楽天API"
+                                print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
+
+                                # 楽天で見つかったらLensとEN検索をスキップ
+                                RAKUTEN_SKIP_THRESHOLD = 0.30
+                                if best_similarity_so_far >= RAKUTEN_SKIP_THRESHOLD and best_source.source_price_jpy > 0:
+                                    skip_lens = True
+                                    skip_text_search = True
+                                    print(f"    [API節約] 楽天APIで候補あり(類似度:{best_similarity_so_far:.0%}) → Lens/SerpAPIスキップ")
+                            else:
+                                print(f"    → 類似度閾値(30%)未満のため選択なし")
+                        else:
+                            print(f"    → 有効な候補なし")
+                    else:
+                        print(f"    → 結果なし")
+
+            # === 3. Google Lens画像検索 ===
+            if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en and not skip_lens:
+                print(f"  [Step 3] Google Lens画像検索")
                 print(f"    Image URL: {image_url[:80]}...")
                 # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）
                 serpapi_condition = "new" if condition == "New" else "any"
@@ -2393,7 +2488,7 @@ def main():
                 if all_sources:
                     zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
                     if zero_price_count > 0:
-                        print(f"    [Step 1.5] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        print(f"    [Step 3b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
                         scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
                         if scraped_count > 0:
                             print(f"    → {scraped_count}件の価格を取得しました")
@@ -2482,91 +2577,10 @@ def main():
                 else:
                     print(f"    → 有効な仕入先なし、次のステップへ")
 
-            # === 1.5. Gemini翻訳（早期実行: Step 2楽天 + Step 4 Web JPで再利用）===
-            japanese_query = None
-            if not skip_text_search and not skip_lens_and_en and ebay_title:
-                cleaned_title = clean_query_for_shopping(ebay_title)
-                gemini_client = GeminiClient()
-                if gemini_client.is_enabled and cleaned_title:
-                    japanese_query = gemini_client.translate_product_name(cleaned_title)
-                    if japanese_query:
-                        print(f"  [Step 1.5] Gemini翻訳: {japanese_query}")
-                    else:
-                        print(f"  [Step 1.5] Gemini翻訳失敗")
-                if not japanese_query:
-                    japanese_query = extract_search_keywords(ebay_title) if ebay_title else keyword
-                    print(f"  [Step 1.5] フォールバック（型番抽出）: {japanese_query}")
-
-            # === 2. 楽天API検索（SerpAPIコスト: 0）===
-            if not top_sources and not skip_text_search and japanese_query:
-                rakuten_client = sourcing_client.rakuten_client
-                if rakuten_client and rakuten_client.is_enabled:
-                    print(f"  [Step 2] 楽天API検索 (コスト0)")
-                    print(f"    検索クエリ: {japanese_query}")
-                    rakuten_offers = rakuten_client.search_multiple(japanese_query, max_results=10)
-                    print(f"    結果: {len(rakuten_offers)}件")
-
-                    # 0件で長いクエリの場合、Geminiで必須キーワードを抽出してリトライ
-                    if not rakuten_offers:
-                        words = japanese_query.split()
-                        if len(words) > 4:
-                            gemini_for_kw = GeminiClient()
-                            if gemini_for_kw.is_enabled:
-                                short_query = gemini_for_kw.extract_essential_keywords(japanese_query, max_keywords=4)
-                                if short_query:
-                                    print(f"    [リトライ] Gemini必須KW: {short_query}")
-                                    rakuten_offers = rakuten_client.search_multiple(short_query, max_results=10)
-                                    print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
-
-                    if rakuten_offers:
-                        all_sources = []
-                        for offer in rakuten_offers:
-                            if offer.source_price_jpy > 0:
-                                if not is_valid_source_for_condition(offer.source_site, offer.source_url, condition):
-                                    continue
-                                all_sources.append(offer)
-
-                        if all_sources:
-                            print(f"    --- 候補一覧 (スコア順) ---")
-                            scored_sources = []
-                            for src in all_sources:
-                                sim = calculate_title_similarity(ebay_title, src.title)
-                                cond_score = calculate_condition_score(src.title, src.source_site)
-                                prio = calculate_source_priority(src.source_site)
-                                total = sim * cond_score * prio
-                                scored_sources.append((src, sim, cond_score, prio, total))
-                            scored_sources.sort(key=lambda x: x[4], reverse=True)
-
-                            for i, (src, sim, cond_score, prio, total) in enumerate(scored_sources[:5]):
-                                print(f"    {i+1}. [{src.source_site}] JPY {src.source_price_jpy:,.0f}")
-                                print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f} = {total:.2f}")
-                                print(f"       {src.title[:50]}...")
-
-                            top_sources = find_top_matching_sources(
-                                ebay_title, all_sources, min_similarity=0.3, top_n=3,
-                                category_name=category_name, condition=condition
-                            )
-                            if top_sources:
-                                best_source = top_sources[0].source
-                                best_similarity_so_far = top_sources[0].similarity
-                                search_method = "楽天API"
-                                print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
-
-                                RAKUTEN_SKIP_THRESHOLD = 0.30
-                                if best_similarity_so_far >= RAKUTEN_SKIP_THRESHOLD and best_source.source_price_jpy > 0:
-                                    skip_text_search = True
-                                    print(f"    [API節約] 楽天APIで候補あり(類似度:{best_similarity_so_far:.0%}) → SerpAPI検索スキップ")
-                            else:
-                                print(f"    → 類似度閾値(30%)未満のため選択なし")
-                        else:
-                            print(f"    → 有効な候補なし")
-                    else:
-                        print(f"    → 結果なし")
-
-            # === 3. 英語でWeb検索（日本向け）===
+            # === 4. 英語でWeb検索（日本向け）===
             if not top_sources and serpapi_client.is_enabled and ebay_title and not skip_text_search and not skip_lens_and_en:
                 cleaned_query = clean_query_for_shopping(ebay_title)
-                print(f"  [Step 3] Web検索 (英語/日本向け)")
+                print(f"  [Step 4] Web検索 (英語/日本向け)")
                 print(f"    整形後: {cleaned_query[:60]}...")
                 web_condition = "new" if condition == "New" else "used"
                 print(f"    Condition: {web_condition} → 対象サイト: {'新品系' if web_condition == 'new' else '新品+中古系'}")
@@ -2592,7 +2606,7 @@ def main():
                 if all_sources:
                     zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
                     if zero_price_count > 0:
-                        print(f"    [Step 3b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        print(f"    [Step 4b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
                         scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
                         if scraped_count > 0:
                             print(f"    → {scraped_count}件の価格を取得しました")
@@ -2629,9 +2643,9 @@ def main():
                     else:
                         print(f"    → 類似度閾値(30%)未満のため選択なし")
 
-            # === 4. 日本語でWeb検索 ===
+            # === 5. 日本語でWeb検索 ===
             if not top_sources and serpapi_client.is_enabled and not skip_text_search and japanese_query:
-                print(f"  [Step 4] Web検索 (日本語)")
+                print(f"  [Step 5] Web検索 (日本語)")
                 print(f"    検索クエリ: {japanese_query}")
                 web_condition = "new" if condition == "New" else "used"
                 print(f"    Condition: {web_condition}")
@@ -2657,7 +2671,7 @@ def main():
                 if all_sources:
                     zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
                     if zero_price_count > 0:
-                        print(f"    [Step 4b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        print(f"    [Step 5b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
                         scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
                         if scraped_count > 0:
                             print(f"    → {scraped_count}件の価格を取得しました")
@@ -3109,6 +3123,7 @@ def main():
                 # Check if profit meets minimum threshold
                 if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
                     print(f"  [SKIP] Profit JPY {profit_no_rebate:.0f} is below minimum JPY {min_profit_jpy} → 次の商品へ")
+                    skip_reasons["negative_profit"] += 1
                     skipped_this_keyword += 1
                     continue  # スプレッドシートに書き込まず、次の商品を試す
             else:
@@ -3209,7 +3224,13 @@ def main():
             skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG", "在庫切れ"]
             if error_reason in skip_errors:
                 print(f"\n  [SKIP] Not writing to sheet: {error_reason}")
-                total_skipped += 1
+                # スキップ理由別にカウント
+                if error_reason == "在庫切れ":
+                    skip_reasons["out_of_stock"] += 1
+                elif error_reason == "Gemini検証NG":
+                    skip_reasons["gemini_reject"] += 1
+                else:
+                    skip_reasons["no_source"] += 1
                 skipped_this_keyword += 1
                 continue
 
@@ -3320,8 +3341,25 @@ def main():
         print(f"AUTO RESEARCH COMPLETED ({total_elapsed/60:.1f}分)")
     print(f"{'='*60}")
     print(f"Total processed: {total_processed}")
-    print(f"Skipped (already in sheet): {total_skipped}")
     print(f"Profitable items: {total_profitable}")
+
+    # スキップ理由の詳細
+    total_skipped_count = sum(skip_reasons.values())
+    print(f"\n--- Skip Reasons ({total_skipped_count} items) ---")
+    if skip_reasons["already_processed"] > 0:
+        print(f"  Already processed (in sheet): {skip_reasons['already_processed']}")
+    if skip_reasons["out_of_stock"] > 0:
+        print(f"  Out of stock: {skip_reasons['out_of_stock']}")
+    if skip_reasons["negative_profit"] > 0:
+        print(f"  Negative profit: {skip_reasons['negative_profit']}")
+    if skip_reasons["no_source"] > 0:
+        print(f"  No source found: {skip_reasons['no_source']}")
+    if skip_reasons["gemini_reject"] > 0:
+        print(f"  Gemini validation NG: {skip_reasons['gemini_reject']}")
+    if skip_reasons["limited_product"] > 0:
+        print(f"  Limited/Graded/Card: {skip_reasons['limited_product']}")
+    if skip_reasons["other"] > 0:
+        print(f"  Other: {skip_reasons['other']}")
     if timeout_reached:
         print(f"*** タイムアウトにより一部キーワード未処理 ***")
 

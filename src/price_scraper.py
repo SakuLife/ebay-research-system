@@ -825,6 +825,8 @@ class PriceScraper:
         out_of_stock_patterns = [
             # 日本語
             "在庫切れ",
+            "在庫なし",           # gamecity.ne.jp等
+            "在庫がありません",   # gamecity.ne.jp等
             "売り切れ",
             "品切れ",
             "欠品中",             # monotaro等

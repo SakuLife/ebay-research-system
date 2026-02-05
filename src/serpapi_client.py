@@ -202,6 +202,7 @@ class SerpApiClient:
         "hlj.com",               # ホビーリンクジャパン海外向け（日本発送不可）
         "play-asia.com",         # プレイアジア海外向け
         "nin-nin-game.com",      # 海外向け（日本発送不可）
+        "kodansha.co.jp/comic",  # 講談社コミック（商品紹介のみ、購入不可）
         "wikipedia.org",         # 百科事典
         "wikia.com",             # ファンサイト
         "fandom.com",            # ファンサイト

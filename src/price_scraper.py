@@ -94,8 +94,12 @@ class PriceScraper:
         - <span class="price--OX_YW">17,900円</span>
         - data-price="17900"
         - "price":17900
+
+        注意: 楽天ブックス(books.rakuten.co.jp)はJSレンダリングのため
+        通常のrequestsでは価格が取得できない。Headlessフォールバックが必要。
         """
         max_retries = 2
+        is_rakuten_books = "books.rakuten.co.jp" in url.lower()
 
         for attempt in range(max_retries):
             try:
@@ -132,7 +136,16 @@ class PriceScraper:
                 if attempt < max_retries - 1:
                     continue
 
-                # 楽天: 価格が見つからない場合は売り切れとみなす
+                # 楽天ブックスはJSレンダリングなので、価格なし=売り切れとは限らない
+                # Headlessフォールバックを試みるため、in_stock=Trueを返す
+                if is_rakuten_books:
+                    print(f"    [Scrape] Rakuten Books: JSレンダリングのため価格取得不可 → Headless必要")
+                    return ScrapedPrice(
+                        price=0, success=False, error_message="JS rendering required",
+                        in_stock=True, stock_status="unknown"
+                    )
+
+                # 楽天市場: 価格が見つからない場合は売り切れとみなす
                 # （売り切れページでは価格表示が消えるパターンが多い）
                 print(f"    [Scrape] Rakuten: 価格なし → 売り切れの可能性大")
                 return ScrapedPrice(
@@ -159,6 +172,53 @@ class PriceScraper:
 
         複数のパターンを試し、最も信頼性の高い価格を返す.
         """
+        # === 楽天ブックス専用パターン（最優先） ===
+        # books.rakuten.co.jp のHTMLでは、メイン商品価格がclass="price"の最初に出現する
+        # 関連商品の価格は後に出現するため、最初のマッチを優先する
+
+        # パターン1: class="productPrice"（JSレンダリング後のみ）
+        product_price_match = re.search(
+            r'class="productPrice"[^>]*>\s*([\d,]+)\s*円',
+            html,
+            re.IGNORECASE
+        )
+        if product_price_match:
+            try:
+                price = float(product_price_match.group(1).replace(',', ''))
+                if 100 <= price <= 10000000:
+                    return price
+            except:
+                pass
+
+        # パターン2: class="price"の最初のマッチ（楽天ブックス用）
+        # 楽天booksではメイン商品価格が最初に出現し、関連商品は後に出現する
+        first_price_match = re.search(
+            r'class="price[^"]*"[^>]*>\s*[¥￥]?([\d,]+)\s*円?',
+            html,
+            re.IGNORECASE
+        )
+        if first_price_match:
+            try:
+                price = float(first_price_match.group(1).replace(',', ''))
+                if 100 <= price <= 10000000:
+                    # 確認: この価格がページ内で繰り返し出現しないことを確認
+                    # （繰り返し出現する場合は関連商品の可能性が高い）
+                    all_price_matches = re.findall(
+                        r'class="price[^"]*"[^>]*>\s*[¥￥]?([\d,]+)\s*円?',
+                        html,
+                        re.IGNORECASE
+                    )
+                    # 最初の価格の出現回数をカウント
+                    first_price_count = sum(
+                        1 for p in all_price_matches
+                        if float(p.replace(',', '')) == price
+                    )
+                    # 最初の価格が3回以下なら採用（多すぎると関連商品の可能性）
+                    if first_price_count <= 3:
+                        return price
+            except:
+                pass
+
         prices_found = []
 
         # パターン0: 構造化データ（JSON-LD）から抽出（最優先）

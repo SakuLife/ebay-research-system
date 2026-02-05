@@ -1455,8 +1455,9 @@ def find_top_matching_sources(
         # 類似度（型番一致ボーナス込み）
         similarity = calculate_title_similarity(ebay_title, source.title)
 
-        # 類似度閾値の判定（価格がある場合は緩和）
-        effective_min_similarity = ABSOLUTE_MIN_SIMILARITY if has_price else min_similarity
+        # 類似度閾値の判定（価格がない場合は厳しく）
+        # 価格あり: min_similarity(30%)、価格なし: ABSOLUTE_MIN_SIMILARITY(55%)
+        effective_min_similarity = min_similarity if has_price else ABSOLUTE_MIN_SIMILARITY
         if similarity < effective_min_similarity:
             low_similarity_excluded += 1
             continue

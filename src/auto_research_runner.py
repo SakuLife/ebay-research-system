@@ -1899,11 +1899,16 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data[15] = f"{float(ebay_price):.1f}" if ebay_price is not None and ebay_price != "" else ""  # P: 販売価格
     row_data[16] = f"{float(ebay_shipping):.1f}" if ebay_shipping is not None and ebay_shipping != "" else ""  # Q: 送料
 
-    # 利益計算結果
-    row_data[17] = str(data.get("profit_no_rebate", ""))  # R: 還付抜き利益額（円）
-    row_data[18] = str(data.get("profit_margin_no_rebate", ""))  # S: 利益率%（還付抜き）
-    row_data[19] = str(data.get("profit_with_rebate", ""))  # T: 還付あり利益額（円）
-    row_data[20] = str(data.get("profit_margin_with_rebate", ""))  # U: 利益率%（還付あり）
+    # 利益計算結果（円・%は整数で出力）
+    profit_no_rebate = data.get("profit_no_rebate", "")
+    profit_margin_no_rebate = data.get("profit_margin_no_rebate", "")
+    profit_with_rebate = data.get("profit_with_rebate", "")
+    profit_margin_with_rebate = data.get("profit_margin_with_rebate", "")
+
+    row_data[17] = str(int(profit_no_rebate)) if profit_no_rebate not in ("", None) else ""  # R: 還付抜き利益額（円）
+    row_data[18] = str(int(profit_margin_no_rebate)) if profit_margin_no_rebate not in ("", None) else ""  # S: 利益率%（還付抜き）
+    row_data[19] = str(int(profit_with_rebate)) if profit_with_rebate not in ("", None) else ""  # T: 還付あり利益額（円）
+    row_data[20] = str(int(profit_margin_with_rebate)) if profit_margin_with_rebate not in ("", None) else ""  # U: 利益率%（還付あり）
 
     # ステータスとメモ（出品フラグは空）
     if data.get("error"):

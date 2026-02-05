@@ -335,11 +335,11 @@ function recalculateProfitFromSelection() {
   const profitWithRebate = calcSheet.getRange("P13").getValue();
   const marginWithRebate = calcSheet.getRange("Q13").getValue();
 
-  // 入力シートに結果を書き戻し
-  inputSheet.getRange(selectedRow, COL_PROFIT_NO_REBATE + 1).setValue(profitNoRebate);
-  inputSheet.getRange(selectedRow, COL_MARGIN_NO_REBATE + 1).setValue(marginNoRebate);
-  inputSheet.getRange(selectedRow, COL_PROFIT_WITH_REBATE + 1).setValue(profitWithRebate);
-  inputSheet.getRange(selectedRow, COL_MARGIN_WITH_REBATE + 1).setValue(marginWithRebate);
+  // 入力シートに結果を書き戻し（円・%は整数で出力）
+  inputSheet.getRange(selectedRow, COL_PROFIT_NO_REBATE + 1).setValue(Math.round(profitNoRebate));
+  inputSheet.getRange(selectedRow, COL_MARGIN_NO_REBATE + 1).setValue(Math.round(marginNoRebate));
+  inputSheet.getRange(selectedRow, COL_PROFIT_WITH_REBATE + 1).setValue(Math.round(profitWithRebate));
+  inputSheet.getRange(selectedRow, COL_MARGIN_WITH_REBATE + 1).setValue(Math.round(marginWithRebate));
 
   // 結果をユーザーに通知
   const resultMsg = [

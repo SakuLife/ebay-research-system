@@ -44,6 +44,116 @@ MAJOR_EC_DOMAINS_FOR_SCRAPING = [
 ]
 
 
+# === デバッグログ機能 ===
+# リサーチ中にスキップされた候補の詳細を記録
+
+@dataclass
+class DebugLogEntry:
+    """デバッグログの1エントリ."""
+    keyword: str
+    ebay_title: str
+    ebay_price: str
+    source_site: str
+    source_title: str
+    source_price: str
+    similarity: str
+    score: str
+    skip_reason: str
+    stock_status: str
+
+
+# グローバルなデバッグログリスト（リサーチ開始時にクリア）
+_debug_log_entries: List[DebugLogEntry] = []
+
+
+def clear_debug_log():
+    """デバッグログをクリアする."""
+    global _debug_log_entries
+    _debug_log_entries = []
+
+
+def add_debug_log(
+    keyword: str,
+    ebay_title: str,
+    ebay_price: float,
+    source_site: str = "",
+    source_title: str = "",
+    source_price: float = 0,
+    similarity: float = 0,
+    score: float = 0,
+    skip_reason: str = "",
+    stock_status: str = ""
+):
+    """デバッグログにエントリを追加する."""
+    global _debug_log_entries
+    _debug_log_entries.append(DebugLogEntry(
+        keyword=keyword,
+        ebay_title=ebay_title[:50] + "..." if len(ebay_title) > 50 else ebay_title,
+        ebay_price=f"${ebay_price:.2f}" if ebay_price else "",
+        source_site=source_site,
+        source_title=source_title[:50] + "..." if len(source_title) > 50 else source_title,
+        source_price=f"JPY {int(source_price):,}" if source_price else "",
+        similarity=f"{similarity:.0%}" if similarity else "",
+        score=f"{score:.2f}" if score else "",
+        skip_reason=skip_reason,
+        stock_status=stock_status,
+    ))
+
+
+def write_debug_log_to_sheet(sheets_client):
+    """デバッグログをスプレッドシートに書き込む."""
+    global _debug_log_entries
+
+    if not _debug_log_entries:
+        print("  [DEBUG LOG] No entries to write")
+        return
+
+    try:
+        spreadsheet = sheets_client.spreadsheet
+
+        # デバッグログシートを取得または作成
+        sheet_name = "デバッグログ"
+        try:
+            debug_sheet = spreadsheet.worksheet(sheet_name)
+        except Exception:
+            # シートが存在しない場合は作成（3番目の位置に）
+            debug_sheet = spreadsheet.add_worksheet(title=sheet_name, rows=5000, cols=10, index=2)
+            print(f"  [DEBUG LOG] Created new sheet: {sheet_name}")
+
+        # シートをクリア
+        debug_sheet.clear()
+
+        # ヘッダー行
+        headers = [
+            "キーワード", "eBay商品", "eBay価格", "仕入先サイト", "仕入先商品",
+            "仕入先価格", "類似度", "スコア", "スキップ理由", "在庫状況"
+        ]
+
+        # データ行を作成
+        rows = [headers]
+        for entry in _debug_log_entries:
+            rows.append([
+                entry.keyword,
+                entry.ebay_title,
+                entry.ebay_price,
+                entry.source_site,
+                entry.source_title,
+                entry.source_price,
+                entry.similarity,
+                entry.score,
+                entry.skip_reason,
+                entry.stock_status,
+            ])
+
+        # 一括書き込み
+        debug_sheet.update(f"A1:J{len(rows)}", rows, value_input_option="USER_ENTERED")
+
+        print(f"  [DEBUG LOG] Written {len(_debug_log_entries)} entries to '{sheet_name}'")
+
+    except Exception as e:
+        print(f"  [DEBUG LOG] Failed to write: {e}")
+
+
 def unwrap_google_redirect_url(url: str) -> str:
     """
     google.com のリダイレクトURLから実際のURLを抽出する.
@@ -1384,7 +1494,9 @@ def find_top_matching_sources(
     require_price: bool = True,
     top_n: int = 3,
     category_name: str = "",
-    condition: str = "New"
+    condition: str = "New",
+    keyword: str = "",
+    ebay_price: float = 0,
 ) -> List[RankedSource]:
     """
     eBayタイトルにマッチする仕入先をスコア順に最大N件返す.
@@ -1437,10 +1549,32 @@ def find_top_matching_sources(
         should_exclude, reason = check_category_exclusion(source.title, category_name)
         if should_exclude:
             category_excluded += 1
+            # デバッグログ: カテゴリ除外
+            add_debug_log(
+                keyword=keyword,
+                ebay_title=ebay_title,
+                ebay_price=ebay_price,
+                source_site=source.source_site,
+                source_title=source.title,
+                source_price=source.source_price_jpy,
+                skip_reason=f"カテゴリ不一致: {reason}",
+                stock_status="OK" if source.in_stock else "在庫なし",
+            )
             continue
 
         # 在庫切れ・中古のみは除外（Step 2/3へフォールバックするため）
         if not source.in_stock or source.stock_status in ["out_of_stock", "used_only"]:
+            # デバッグログ: 在庫切れ
+            add_debug_log(
+                keyword=keyword,
+                ebay_title=ebay_title,
+                ebay_price=ebay_price,
+                source_site=source.source_site,
+                source_title=source.title,
+                source_price=source.source_price_jpy,
+                skip_reason="在庫切れ",
+                stock_status=source.stock_status or "out_of_stock",
+            )
             continue
 
         # 価格の有無を判定
@@ -1460,6 +1594,18 @@ def find_top_matching_sources(
         effective_min_similarity = min_similarity if has_price else ABSOLUTE_MIN_SIMILARITY
         if similarity < effective_min_similarity:
             low_similarity_excluded += 1
+            # デバッグログ: 低類似度
+            add_debug_log(
+                keyword=keyword,
+                ebay_title=ebay_title,
+                ebay_price=ebay_price,
+                source_site=source.source_site,
+                source_title=source.title,
+                source_price=source.source_price_jpy,
+                similarity=similarity,
+                skip_reason=f"低類似度 (閾値{effective_min_similarity:.0%})",
+                stock_status="OK" if source.in_stock else "在庫なし",
+            )
             continue
 
         # conditionスコア
@@ -1469,12 +1615,36 @@ def find_top_matching_sources(
         # 「中古」「美品」「Aランク」等が含まれる場合、スコアは0.3程度になる
         if condition == "New" and condition_score < 0.5:
             used_excluded += 1
+            # デバッグログ: 中古品除外
+            add_debug_log(
+                keyword=keyword,
+                ebay_title=ebay_title,
+                ebay_price=ebay_price,
+                source_site=source.source_site,
+                source_title=source.title,
+                source_price=source.source_price_jpy,
+                similarity=similarity,
+                skip_reason=f"中古品 (condition_score={condition_score:.2f})",
+                stock_status="OK" if source.in_stock else "在庫なし",
+            )
             continue
 
         # アクセサリー/周辺機器の除外（本体を探しているのにケースが出てきた場合等）
         is_accessory, accessory_kw = is_accessory_product(source.title)
         if is_accessory:
             print(f"    [SKIP] アクセサリー検出: '{accessory_kw}' → {source.title[:40]}...")
+            # デバッグログ: アクセサリー除外
+            add_debug_log(
+                keyword=keyword,
+                ebay_title=ebay_title,
+                ebay_price=ebay_price,
+                source_site=source.source_site,
+                source_title=source.title,
+                source_price=source.source_price_jpy,
+                similarity=similarity,
+                skip_reason=f"アクセサリー検出: {accessory_kw}",
+                stock_status="OK" if source.in_stock else "在庫なし",
+            )
             continue
 
         # 仕入れ優先度
@@ -1959,6 +2129,9 @@ def main():
     # Gemini使用量をリセット
     reset_gemini_usage()
 
+    # デバッグログをクリア
+    clear_debug_log()
+
     # Load environment
     load_dotenv()
 
@@ -2421,7 +2594,8 @@ def main():
 
                             rakuten_top = find_top_matching_sources(
                                 ebay_title, rakuten_sources, min_similarity=0.30, top_n=3,
-                                category_name=category_name, condition=condition
+                                category_name=category_name, condition=condition,
+                                keyword=keyword, ebay_price=ebay_price
                             )
                             if rakuten_top:
                                 top_sources = rakuten_top
@@ -2534,25 +2708,85 @@ def main():
                     used_excluded_count = 0
                     for src, sim, _, _, total in scored_sources:
                         if sim < MIN_IMAGE_SIMILARITY:
+                            # デバッグログ: 低類似度（画像検索）
+                            add_debug_log(
+                                keyword=keyword,
+                                ebay_title=ebay_title,
+                                ebay_price=ebay_price,
+                                source_site=src.source_site,
+                                source_title=src.title,
+                                source_price=src.source_price_jpy,
+                                similarity=sim,
+                                skip_reason=f"低類似度/Lens (閾値{MIN_IMAGE_SIMILARITY:.0%})",
+                                stock_status="OK" if src.in_stock else "在庫なし",
+                            )
                             continue
                         # 在庫切れ・中古のみを除外（Step 2/3へフォールバック）
                         if not src.in_stock or src.stock_status in ["out_of_stock", "used_only"]:
                             stock_excluded_count += 1
+                            # デバッグログ: 在庫切れ（画像検索）
+                            add_debug_log(
+                                keyword=keyword,
+                                ebay_title=ebay_title,
+                                ebay_price=ebay_price,
+                                source_site=src.source_site,
+                                source_title=src.title,
+                                source_price=src.source_price_jpy,
+                                similarity=sim,
+                                skip_reason="在庫切れ/Lens",
+                                stock_status=src.stock_status or "out_of_stock",
+                            )
                             continue
                         # New条件時、タイトルに中古キーワードがある商品を除外
                         if condition == "New":
                             cond_score = calculate_condition_score(src.title, src.source_site)
                             if cond_score < 0.5:
                                 used_excluded_count += 1
+                                # デバッグログ: 中古品（画像検索）
+                                add_debug_log(
+                                    keyword=keyword,
+                                    ebay_title=ebay_title,
+                                    ebay_price=ebay_price,
+                                    source_site=src.source_site,
+                                    source_title=src.title,
+                                    source_price=src.source_price_jpy,
+                                    similarity=sim,
+                                    skip_reason=f"中古品/Lens (cond={cond_score:.2f})",
+                                    stock_status="OK" if src.in_stock else "在庫なし",
+                                )
                                 continue
                         # アクセサリー/周辺機器の除外
-                        is_acc, _ = is_accessory_product(src.title)
+                        is_acc, acc_kw = is_accessory_product(src.title)
                         if is_acc:
+                            # デバッグログ: アクセサリー（画像検索）
+                            add_debug_log(
+                                keyword=keyword,
+                                ebay_title=ebay_title,
+                                ebay_price=ebay_price,
+                                source_site=src.source_site,
+                                source_title=src.title,
+                                source_price=src.source_price_jpy,
+                                similarity=sim,
+                                skip_reason=f"アクセサリー/Lens: {acc_kw}",
+                                stock_status="OK" if src.in_stock else "在庫なし",
+                            )
                             continue
                         # カテゴリ除外チェック（Plushなのに本/雑誌など）
-                        should_exclude, _ = check_category_exclusion(src.title, category_name)
+                        should_exclude, excl_reason = check_category_exclusion(src.title, category_name)
                         if should_exclude:
                             category_excluded_count += 1
+                            # デバッグログ: カテゴリ除外（画像検索）
+                            add_debug_log(
+                                keyword=keyword,
+                                ebay_title=ebay_title,
+                                ebay_price=ebay_price,
+                                source_site=src.source_site,
+                                source_title=src.title,
+                                source_price=src.source_price_jpy,
+                                similarity=sim,
+                                skip_reason=f"カテゴリ不一致/Lens: {excl_reason}",
+                                stock_status="OK" if src.in_stock else "在庫なし",
+                            )
                             continue
                         valid_sources.append((src, sim, total))
 
@@ -2640,7 +2874,11 @@ def main():
                         print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
                         print(f"       {src.title[:50]}...")
 
-                    top_sources = find_top_matching_sources(ebay_title, all_sources, min_similarity=0.3, top_n=3, category_name=category_name, condition=condition)
+                    top_sources = find_top_matching_sources(
+                        ebay_title, all_sources, min_similarity=0.3, top_n=3,
+                        category_name=category_name, condition=condition,
+                        keyword=keyword, ebay_price=ebay_price
+                    )
                     if top_sources:
                         best_source = top_sources[0].source
                         search_method = "英語検索"
@@ -3277,6 +3515,10 @@ def main():
     if keyword_stats:
         excluded_counts = count_excluded_by_keyword(sheets_client, main_keywords)
         update_keyword_ranking(sheets_client, keyword_stats, excluded_counts)
+
+    # デバッグログをスプレッドシートに書き込み
+    print(f"\n[DEBUG] Writing debug log to spreadsheet...")
+    write_debug_log_to_sheet(sheets_client)
 
     # Summary
     total_elapsed = time.time() - pipeline_start_time

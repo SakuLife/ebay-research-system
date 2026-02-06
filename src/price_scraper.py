@@ -843,6 +843,9 @@ class PriceScraper:
             "予約終了",           # p-bandai等（「予約受付終了」「予約終了」両方）
             "予約商品",           # p-bandai等（今買えない）
             "予約受付中",         # p-bandai等（今買えない）
+            "抽選販売",           # p-bandai等（抽選に申し込む形式）
+            "抽選受付中",         # p-bandai等（抽選受付中）
+            "抽選受付",           # p-bandai等（抽選受付）
             "受付終了",           # p-bandai等
             "受付は終了",         # p-bandai等
             "販売終了",

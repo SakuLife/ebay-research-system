@@ -232,6 +232,8 @@ class SerpApiClient:
         "fullress.com",            # スニーカーニュース/リリース情報ブログ（購入不可）
         "stv.jp",                  # 札幌テレビ放送（テレビ局サイト、EC機能なし）
         "snkrdunk.com",            # スニーカーダンク（フリマ/二次流通）
+        "ec.treasure-f.com",       # 中古品専門サイト（コンディションB等）
+        "treasure-f.com",          # 中古品専門サイト（買取・中古販売）
     ]
 
     # スパム/詐欺サイトによく使われるTLD（トップレベルドメイン）

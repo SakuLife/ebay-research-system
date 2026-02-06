@@ -184,6 +184,8 @@ class SerpApiClient:
         "themarinaatroweswharf.com",  # 海外スパム/ブログサイト
         "sgs109.com",            # 商品紹介ページ（購入不可）
         "saleflatet.click",      # スパム/偽ECサイト（商品一覧のみ）
+        "rsrbooking.com",        # 謎サイト（商品なし）
+        "trustedcoach.com",      # 危険なサイト（マルウェア疑い）
         "shobanarealty.com",     # 不動産サイト（ECサイトではない）
         "audio-st.jp",           # オーディオ買取実績ページ（販売なし）
         "bishoujoseries.com",    # ホラー美少女 商品紹介サイト

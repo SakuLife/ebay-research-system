@@ -841,6 +841,8 @@ class PriceScraper:
             "メーカー取り寄せ",         # giftmall等
             "予約受付終了",
             "予約終了",           # p-bandai等（「予約受付終了」「予約終了」両方）
+            "予約商品",           # p-bandai等（今買えない）
+            "予約受付中",         # p-bandai等（今買えない）
             "受付終了",           # p-bandai等
             "受付は終了",         # p-bandai等
             "販売終了",
@@ -857,6 +859,7 @@ class PriceScraper:
             "ご購入いただけません",
             "カートに入れることができません",
             "ご注文できない",           # books.rakuten.co.jp
+            "売り切れました",           # yamada-denkiweb.com
             "注文できません",
             "ご注文いただけません",
             "お買い求めいただけません",

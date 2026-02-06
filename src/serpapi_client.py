@@ -234,6 +234,7 @@ class SerpApiClient:
         "snkrdunk.com",            # スニーカーダンク（フリマ/二次流通）
         "ec.treasure-f.com",       # 中古品専門サイト（コンディションB等）
         "treasure-f.com",          # 中古品専門サイト（買取・中古販売）
+        "retailjewellerindia.com", # 謎サイト（インド・ジュエリー系スパム）
     ]
 
     # スパム/詐欺サイトによく使われるTLD（トップレベルドメイン）

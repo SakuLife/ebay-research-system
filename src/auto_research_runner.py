@@ -2514,22 +2514,29 @@ def main():
             skip_lens_and_en = False  # アパレル検出時にLens/EN検索をスキップ
             best_similarity_so_far = 0.0  # 最良の類似度を記録
 
-            # === SerpAPI節約: アパレル商品の検出 ===
-            # 日本のアパレルブランドはLens/EN検索の成功率が低いため、直接JP検索へ
-            JAPANESE_APPAREL_BRANDS = [
+            # === SerpAPI節約: 成功率の低いカテゴリをスキップ ===
+            # 以下のカテゴリはLens/EN検索の成功率が極めて低いため、楽天APIのみで判断
+            LOW_SUCCESS_KEYWORDS = [
+                # 日本アパレルブランド
                 "liz lisa", "lizlisa", "axes femme", "axesfemme",
                 "angelic pretty", "angelicpretty", "baby the stars",
                 "metamorphose", "innocent world", "emily temple",
                 "honey cinnamon", "ank rouge", "secret honey",
                 "lolita", "harajuku", "kawaii dress", "kawaii skirt",
                 "kawaii blouse", "kawaii coat", "kawaii jacket",
+                # ヴィンテージ・アンティーク（新品仕入れ困難）
+                "vintage", "retro", "antique", "deadstock",
+                # レコード・ヴァイナル（限定・廃盤が多い）
+                "vinyl", "lp record", "12 inch", "7 inch",
+                # ジュエリー（一点物・カスタムが多い）
+                "handmade jewelry", "custom jewelry", "one of a kind",
             ]
             title_lower = ebay_title.lower() if ebay_title else ""
-            is_japanese_apparel = any(brand in title_lower for brand in JAPANESE_APPAREL_BRANDS)
+            is_low_success_category = any(kw in title_lower for kw in LOW_SUCCESS_KEYWORDS)
 
-            if is_japanese_apparel:
+            if is_low_success_category:
                 skip_lens_and_en = True
-                print(f"  [API節約] 日本アパレルブランド検出 → Lens/EN検索スキップ、JP検索へ")
+                print(f"  [API節約] 低成功率カテゴリ検出 → Lens/EN検索スキップ")
 
             # === 1. Gemini翻訳（楽天API用に先に実行）===
             japanese_query = None
@@ -2604,12 +2611,11 @@ def main():
                                 search_method = "楽天API"
                                 print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
 
-                                # 楽天で見つかったらLensとEN検索をスキップ
-                                RAKUTEN_SKIP_THRESHOLD = 0.30
-                                if best_similarity_so_far >= RAKUTEN_SKIP_THRESHOLD and best_source.source_price_jpy > 0:
-                                    skip_lens = True
-                                    skip_text_search = True
-                                    print(f"    [API節約] 楽天APIで候補あり(類似度:{best_similarity_so_far:.0%}) → Lens/SerpAPIスキップ")
+                                # 楽天で有効な結果が見つかったらLensとEN検索をスキップ
+                                # ※Lensの成功率が5%と低いため、楽天結果があれば常にスキップ
+                                skip_lens = True
+                                skip_text_search = True
+                                print(f"    [API節約] 楽天APIで候補あり(類似度:{best_similarity_so_far:.0%}) → Lens/SerpAPIスキップ")
                             else:
                                 print(f"    → 類似度閾値(30%)未満のため選択なし")
                         else:

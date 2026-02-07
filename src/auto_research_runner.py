@@ -1813,8 +1813,8 @@ def update_keyword_ranking(
         worksheet = sheet_client.spreadsheet.worksheet("設定＆キーワード")
         today = datetime.now(JST).strftime("%Y-%m-%d")
 
-        # 既存データを読み込み（H4:N100）
-        existing_data = worksheet.get("H4:N100")
+        # 既存データを読み込み（H4:N300）
+        existing_data = worksheet.get("H4:N300")
         existing_stats: dict[str, dict] = {}
 
         if existing_data:
@@ -1911,10 +1911,10 @@ def update_keyword_ranking(
 
             # 古いデータが残らないよう、データ範囲の下をクリア
             clear_start = end_row + 1
-            if clear_start <= 100:
-                empty_rows = [["", "", "", "", "", "", ""]] * (100 - end_row)
+            if clear_start <= 300:
+                empty_rows = [["", "", "", "", "", "", ""]] * (300 - end_row)
                 worksheet.update(
-                    range_name=f"H{clear_start}:N100",
+                    range_name=f"H{clear_start}:N300",
                     values=empty_rows,
                 )
 

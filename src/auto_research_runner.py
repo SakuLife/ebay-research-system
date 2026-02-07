@@ -2530,6 +2530,15 @@ def main():
                 "vinyl", "lp record", "12 inch", "7 inch",
                 # ジュエリー（一点物・カスタムが多い）
                 "handmade jewelry", "custom jewelry", "one of a kind",
+                # DVD/Blu-ray/CD（限定版・廃盤が多い）
+                "first limited edition", "limited edition blu-ray",
+                "limited edition dvd", "box set", "soundtrack cd",
+                # Zippoライター（ヴィンテージ・限定が多い）
+                "zippo lighter", "zippo oil",
+                # 香水（コラボ・限定が多い）
+                "fragrance", "parfum", "eau de",
+                # 自動車パーツ（車種/年式固有）
+                "genuine oem", "jdm parts",
             ]
             title_lower = ebay_title.lower() if ebay_title else ""
             is_low_success_category = any(kw in title_lower for kw in LOW_SUCCESS_KEYWORDS)

@@ -193,6 +193,7 @@ class SerpApiClient:
         "goodsmile.info",        # グッドスマイルカンパニー公式（直販なし）
         "megahobby.jp",          # メガハウス公式（直販なし）
         "bandai-hobby.net",      # バンダイホビー公式（直販なし）
+        "p-bandai.jp",           # プレミアムバンダイ（抽選・予約・限定品が多い）
         "tamiya.com",            # タミヤ公式（製品紹介のみ、購入はtamiyashop.jp）
         "ktc.jp",                # KTC公式カタログ（製品紹介のみ、購入は販売店経由）
         "toyosteel.jp",          # TOYO STEEL公式（製品一覧のみ、購入は販売店経由）

@@ -7,27 +7,20 @@ on:
 
 jobs:
   auto_research:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6時間（GitHub Actions上限）
+    runs-on: self-hosted
+    timeout-minutes: 360  # 6時間
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pip'
-
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
 
-      - name: Install Playwright browsers
+      - name: Install Playwright browsers (if needed)
         run: |
           playwright install chromium
-          playwright install-deps chromium
 
       - name: Run auto research pipeline
         env:

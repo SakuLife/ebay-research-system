@@ -24,6 +24,9 @@ jobs:
 
       - name: Run auto research pipeline
         env:
+          # Windows encoding fix
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
           # eBay API
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}

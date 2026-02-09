@@ -20,7 +20,7 @@ jobs:
 
       - name: Install Playwright browsers (if needed)
         run: |
-          python3 -m playwright install chromium
+          python3 -m playwright install --with-deps chromium
 
       - name: Run auto research pipeline
         env:

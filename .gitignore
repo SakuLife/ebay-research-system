@@ -59,6 +59,10 @@ error_*.txt
 Thumbs.db
 nul
 
+# GitHub Actions self-hosted runner
+actions-runner/
+.playwright-mcp/
+
 # Temporary files
 tmpclaude-*
 image*.png

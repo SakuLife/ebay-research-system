@@ -16,11 +16,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip3 install -r requirements.txt
 
       - name: Install Playwright browsers (if needed)
         run: |
-          python -m playwright install --with-deps chromium
+          python3 -m playwright install --with-deps chromium
 
       - name: Run auto research pipeline
         env:
@@ -61,7 +61,7 @@ jobs:
           # Mock settings
           USE_MOCKS: ${{ secrets.USE_MOCKS }}
         run: |
-          python -m src.auto_research_runner
+          python3 -m src.auto_research_runner
 
       - name: Upload logs on failure
         if: failure()

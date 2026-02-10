@@ -2129,6 +2129,13 @@ def main():
     # Gemini使用量をリセット
     reset_gemini_usage()
 
+    # Web Pre-Screening統計をリセット
+    try:
+        from .web_prescreen import reset_prescreen_stats
+        reset_prescreen_stats()
+    except ImportError:
+        pass
+
     # デバッグログをクリア
     clear_debug_log()
 
@@ -2631,6 +2638,60 @@ def main():
                             print(f"    → 有効な候補なし")
                     else:
                         print(f"    → 結果なし")
+
+            # === 2.5 Free Web Pre-Screening (DuckDuckGo + Gemini) ===
+            # 楽天で見つからなかった場合、無料Web検索で仕入れ困難性をチェック
+            # → 仕入れ困難ならSerpAPI（Lens/EN）をスキップして$2節約
+            if not best_source and not skip_lens_and_en and japanese_query:
+                try:
+                    from .web_prescreen import (
+                        FreeWebSearcher, build_prescreen_queries,
+                        format_snippets_for_gemini, _prescreen_stats,
+                    )
+                    free_searcher = FreeWebSearcher()
+                    if free_searcher.is_enabled:
+                        print(f"  [Step 2.5] Free Web Pre-Screening (DuckDuckGo)")
+                        prescreen_queries = build_prescreen_queries(japanese_query, ebay_title)
+                        print(f"    Queries: {prescreen_queries}")
+
+                        search_results = free_searcher.search_multiple_queries(
+                            prescreen_queries,
+                            max_results_per_query=5,
+                            delay_between=1.0,
+                        )
+                        print(f"    Results: {len(search_results)} snippets")
+
+                        if search_results:
+                            snippets_text = format_snippets_for_gemini(search_results)
+                            gemini_for_prescreen = GeminiClient()
+                            if gemini_for_prescreen.is_enabled:
+                                prescreen_result = gemini_for_prescreen.analyze_web_prescreen(
+                                    ebay_title=ebay_title,
+                                    japanese_query=japanese_query,
+                                    web_snippets=snippets_text,
+                                    ebay_price_usd=ebay_price,
+                                    condition=condition,
+                                )
+
+                                _prescreen_stats["total_checks"] += 1
+
+                                if prescreen_result and prescreen_result.should_skip and prescreen_result.confidence in ["high", "medium"]:
+                                    print(f"    [PRESCREEN SKIP] {prescreen_result.skip_reason}")
+                                    print(f"      Difficulty: {prescreen_result.sourcing_difficulty}")
+                                    print(f"      Confidence: {prescreen_result.confidence}")
+                                    print(f"      Details: {prescreen_result.details}")
+                                    skip_lens_and_en = True
+                                    _prescreen_stats["skipped_by_prescreen"] += 1
+                                    _prescreen_stats["serpapi_calls_saved"] += 2
+                                else:
+                                    reason = "N/A"
+                                    if prescreen_result:
+                                        reason = f"difficulty={prescreen_result.sourcing_difficulty}, confidence={prescreen_result.confidence}"
+                                    print(f"    [PRESCREEN PASS] Proceeding to SerpAPI ({reason})")
+                        else:
+                            print(f"    DuckDuckGo 0件 → SerpAPIへ")
+                except Exception as e:
+                    print(f"  [Step 2.5] Pre-screening error (continuing): {e}")
 
             # === 3. Google Lens画像検索 ===
             if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en and not skip_lens:
@@ -3597,6 +3658,20 @@ def main():
         print(f"\n  Cost (estimated):")
         print(f"    USD: ${gemini_summary['estimated_cost_usd']:.4f}")
         print(f"    JPY: {gemini_summary['estimated_cost_jpy']:,}円")
+
+    # Web Pre-Screening統計
+    try:
+        from .web_prescreen import get_prescreen_stats
+        ps = get_prescreen_stats()
+        if ps["total_checks"] > 0:
+            print(f"\n--- Web Pre-Screening Stats ---")
+            print(f"  Total checks: {ps['total_checks']}")
+            print(f"  Skipped by prescreen: {ps['skipped_by_prescreen']}")
+            print(f"  SerpAPI calls saved: {ps['serpapi_calls_saved']}")
+            saved_usd = ps['serpapi_calls_saved'] * 1.0
+            print(f"  Estimated savings: ${saved_usd:.0f}")
+    except ImportError:
+        pass
 
     print(f"{'='*60}")
 

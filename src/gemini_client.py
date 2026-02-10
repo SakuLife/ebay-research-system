@@ -63,6 +63,17 @@ class ImageAnalysisResult:
     raw_response: str  # Geminiの生出力
 
 
+@dataclass
+class WebPrescreenAnalysis:
+    """GeminiによるWeb事前スクリーニング分析結果."""
+    should_skip: bool       # SerpAPI検索をスキップすべきか
+    skip_reason: str        # スキップ理由
+    confidence: str         # high/medium/low
+    sourcing_difficulty: str  # easy/moderate/hard/impossible
+    details: str            # 詳細説明
+    raw_response: str       # Geminiの生出力
+
+
 # グローバル使用量トラッカー（モジュールレベル）
 _gemini_usage = {
     "calls": [],  # {"method": str, "input_tokens": int, "output_tokens": int}
@@ -740,6 +751,126 @@ DETAILS: [画像から読み取った詳細（1行）]
             )
         except Exception as e:
             print(f"  [WARN] Failed to parse image analysis result: {e}")
+            return None
+
+    def analyze_web_prescreen(
+        self,
+        ebay_title: str,
+        japanese_query: str,
+        web_snippets: str,
+        ebay_price_usd: float = 0.0,
+        condition: str = "New",
+    ) -> Optional['WebPrescreenAnalysis']:
+        """
+        Web検索スニペットを分析し、仕入れ困難度を判定する.
+
+        楽天APIで見つからなかった商品について、DuckDuckGoの検索スニペットから
+        予約制・抽選販売・限定品・廃盤品等を検出し、SerpAPI呼び出しを節約する。
+
+        Args:
+            ebay_title: eBayタイトル（英語）
+            japanese_query: Gemini翻訳済み日本語クエリ
+            web_snippets: DuckDuckGo検索結果の整形済みスニペット
+            ebay_price_usd: eBay価格（参考）
+            condition: 商品コンディション
+
+        Returns:
+            WebPrescreenAnalysis。失敗時はNone。
+        """
+        if not self.is_enabled:
+            return None
+
+        prompt = f'''あなたはeBay転売リサーチのアシスタントです。
+以下の商品について、Web検索結果のスニペットを分析し、
+日本の大手ECサイト（Amazon、楽天、Yahoo）で新品として仕入れられるかを判定してください。
+
+【商品情報】
+eBayタイトル: {ebay_title}
+日本語検索クエリ: {japanese_query}
+eBay価格: ${ebay_price_usd:.2f}
+コンディション: {condition}
+
+【Web検索結果（スニペット）】
+{web_snippets}
+
+【判定ルール】
+以下の場合は「仕入れ困難（スキップ推奨）」と判定：
+
+1. 予約制 - 「予約受付」「予約開始」「予約商品」「予約販売」が多い
+2. 抽選式 - 「抽選販売」「抽選受付」「応募」「当選」が多い
+3. 限定品 - 「数量限定」「期間限定」「店舗限定」「イベント限定」「完売」が多い
+4. 廃盤/生産終了 - 「生産終了」「廃盤」「販売終了」「入手困難」が多い
+5. 中古市場のみ - スニペットがフリマ（メルカリ、ヤフオク）の結果ばかり
+6. 通販ページなし - 大手ECサイトの商品ページが1件もない
+7. プレミア価格 - 定価を大幅に超える転売価格ばかり
+
+以下の場合は「仕入れ可能（続行）」と判定：
+1. Amazon/楽天/Yahooの商品ページが見つかる
+2. 「在庫あり」「カートに入れる」等の表現がある
+3. 通常価格で販売されている情報がある
+4. 判断材料が不足している（スニペットが少ない、関連性が低い）
+
+【重要】判断材料が不足している場合は「続行」としてください。
+確実にスキップすべき場合のみスキップを推奨してください。
+
+【出力形式】必ずこの形式で出力:
+SKIP: [YES/NO]
+REASON: [スキップ理由。スキップ不要なら「なし」]
+CONFIDENCE: [high/medium/low]
+DIFFICULTY: [easy/moderate/hard/impossible]
+DETAILS: [Web検索結果から読み取った情報（1-2行）]
+
+それでは分析してください:'''
+
+        try:
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            _log_gemini_call("web_prescreen", len(prompt) // 4, len(result) // 4)
+            return self._parse_web_prescreen_result(result)
+        except Exception as e:
+            print(f"  [WARN] Gemini web prescreen failed: {e}")
+            return None
+
+    def _parse_web_prescreen_result(self, text: str) -> Optional['WebPrescreenAnalysis']:
+        """Geminiのweb事前スクリーニング結果をパース."""
+        try:
+            should_skip = False
+            skip_reason = ""
+            confidence = "low"
+            difficulty = "moderate"
+            details = ""
+
+            for line in text.split('\n'):
+                line = line.strip()
+                upper_line = line.upper()
+
+                if upper_line.startswith('SKIP:'):
+                    should_skip = 'YES' in upper_line
+                elif upper_line.startswith('REASON:'):
+                    skip_reason = line.split(':', 1)[1].strip() if ':' in line else ""
+                    if skip_reason == "なし":
+                        skip_reason = ""
+                elif upper_line.startswith('CONFIDENCE:'):
+                    conf_value = line.split(':', 1)[1].strip().lower() if ':' in line else "low"
+                    if conf_value in ["high", "medium", "low"]:
+                        confidence = conf_value
+                elif upper_line.startswith('DIFFICULTY:'):
+                    diff_value = line.split(':', 1)[1].strip().lower() if ':' in line else "moderate"
+                    if diff_value in ["easy", "moderate", "hard", "impossible"]:
+                        difficulty = diff_value
+                elif upper_line.startswith('DETAILS:'):
+                    details = line.split(':', 1)[1].strip() if ':' in line else ""
+
+            return WebPrescreenAnalysis(
+                should_skip=should_skip,
+                skip_reason=skip_reason,
+                confidence=confidence,
+                sourcing_difficulty=difficulty,
+                details=details,
+                raw_response=text,
+            )
+        except Exception as e:
+            print(f"  [WARN] Failed to parse web prescreen result: {e}")
             return None
 
 

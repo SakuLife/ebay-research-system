@@ -2693,215 +2693,12 @@ def main():
                 except Exception as e:
                     print(f"  [Step 2.5] Pre-screening error (continuing): {e}")
 
-            # === 3. Google Lens画像検索 ===
-            if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en and not skip_lens:
-                print(f"  [Step 3] Google Lens画像検索")
-                print(f"    Image URL: {image_url[:80]}...")
-                # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）
-                serpapi_condition = "new" if condition == "New" else "any"
-                print(f"    Condition: {serpapi_condition} → {'フリマ除外' if serpapi_condition == 'new' else '全サイト対象'}")
-                image_results = serpapi_client.search_by_image(image_url, condition=serpapi_condition, max_results=10)
-                log_serpapi_call("Google Lens", f"[IMAGE] {ebay_title[:30]}", len(image_results))
-
-                # ShoppingItemをSourceOfferに変換
-                # フィルタリング: 価格0円、New条件でのフリマ系サイトを除外
-                # ただし大手ECサイト（Amazon/楽天/Yahoo）は価格0でも含める
-                MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
-                no_url_count = 0
-                no_price_count = 0
-                major_ec_no_price = 0
-                condition_skipped = 0
-                for shop_item in image_results:
-                    if not shop_item.link:
-                        no_url_count += 1
-                        continue
-                    # 大手ECサイトかどうか判定
-                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
-                    if shop_item.price <= 0:
-                        if is_major_ec:
-                            # 大手ECは価格0でも含める（後で手動確認）
-                            major_ec_no_price += 1
-                        else:
-                            no_price_count += 1
-                            continue
-                    # New条件でフリマ系サイトを除外
-                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
-                        condition_skipped += 1
-                        continue
-                    all_sources.append(SourceOffer(
-                        source_site=shop_item.source,
-                        source_url=encode_url_with_japanese(shop_item.link),
-                        source_price_jpy=shop_item.price,
-                        source_shipping_jpy=0,
-                        stock_hint="画像検索",
-                        title=shop_item.title,
-                    ))
-
-                # 詳細ログ
-                print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効")
-                if major_ec_no_price > 0:
-                    print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, 大手EC価格なし: {major_ec_no_price}, フリマ除外: {condition_skipped})")
-                else:
-                    print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, フリマ除外: {condition_skipped})")
-
-                # 価格0円の大手ECアイテムをスクレイピングで再取得
-                if all_sources:
-                    zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
-                    if zero_price_count > 0:
-                        print(f"    [Step 3b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
-                        scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
-                        if scraped_count > 0:
-                            print(f"    → {scraped_count}件の価格を取得しました")
-
-                if all_sources:
-                    # 候補一覧を表示（類似度付き）
-                    print(f"    --- 候補一覧 (スコア順) ---")
-                    scored_sources = []
-                    for src in all_sources:
-                        sim = calculate_title_similarity(ebay_title, src.title)
-                        cond_score = calculate_condition_score(src.title, src.source_site)
-                        prio = calculate_source_priority(src.source_site)
-                        total = sim * cond_score * prio
-                        scored_sources.append((src, sim, cond_score, prio, total))
-                    scored_sources.sort(key=lambda x: x[4], reverse=True)
-
-                    for i, (src, sim, cond_score, prio, total) in enumerate(scored_sources[:5]):
-                        prio_label = "仕入" if prio >= 0.9 else "相場" if prio <= 0.6 else "中"
-                        print(f"    {i+1}. [{src.source_site}] JPY {src.source_price_jpy:,.0f}")
-                        print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
-                        print(f"       {src.title[:50]}...")
-
-                    # 画像検索でも類似度チェック（誤爆防止）
-                    # 画像一致でも全く関係ない商品の場合があるため
-                    MIN_IMAGE_SIMILARITY = 0.35  # 画像検索の類似度閾値
-
-                    # カテゴリベースの除外チェックも適用
-                    # 在庫切れ・中古のみの商品も除外
-                    # New条件時、中古品も除外
-                    valid_sources = []
-                    category_excluded_count = 0
-                    stock_excluded_count = 0
-                    used_excluded_count = 0
-                    for src, sim, _, _, total in scored_sources:
-                        if sim < MIN_IMAGE_SIMILARITY:
-                            # デバッグログ: 低類似度（画像検索）
-                            add_debug_log(
-                                keyword=keyword,
-                                ebay_title=ebay_title,
-                                ebay_price=ebay_price,
-                                source_site=src.source_site,
-                                source_title=src.title,
-                                source_price=src.source_price_jpy,
-                                similarity=sim,
-                                skip_reason=f"低類似度/Lens (閾値{MIN_IMAGE_SIMILARITY:.0%})",
-                                stock_status="OK" if src.in_stock else "在庫なし",
-                            )
-                            continue
-                        # 在庫切れ・中古のみを除外（Step 2/3へフォールバック）
-                        if not src.in_stock or src.stock_status in ["out_of_stock", "used_only"]:
-                            stock_excluded_count += 1
-                            # デバッグログ: 在庫切れ（画像検索）
-                            add_debug_log(
-                                keyword=keyword,
-                                ebay_title=ebay_title,
-                                ebay_price=ebay_price,
-                                source_site=src.source_site,
-                                source_title=src.title,
-                                source_price=src.source_price_jpy,
-                                similarity=sim,
-                                skip_reason="在庫切れ/Lens",
-                                stock_status=src.stock_status or "out_of_stock",
-                            )
-                            continue
-                        # New条件時、タイトルに中古キーワードがある商品を除外
-                        if condition == "New":
-                            cond_score = calculate_condition_score(src.title, src.source_site)
-                            if cond_score < 0.5:
-                                used_excluded_count += 1
-                                # デバッグログ: 中古品（画像検索）
-                                add_debug_log(
-                                    keyword=keyword,
-                                    ebay_title=ebay_title,
-                                    ebay_price=ebay_price,
-                                    source_site=src.source_site,
-                                    source_title=src.title,
-                                    source_price=src.source_price_jpy,
-                                    similarity=sim,
-                                    skip_reason=f"中古品/Lens (cond={cond_score:.2f})",
-                                    stock_status="OK" if src.in_stock else "在庫なし",
-                                )
-                                continue
-                        # アクセサリー/周辺機器の除外
-                        is_acc, acc_kw = is_accessory_product(src.title)
-                        if is_acc:
-                            # デバッグログ: アクセサリー（画像検索）
-                            add_debug_log(
-                                keyword=keyword,
-                                ebay_title=ebay_title,
-                                ebay_price=ebay_price,
-                                source_site=src.source_site,
-                                source_title=src.title,
-                                source_price=src.source_price_jpy,
-                                similarity=sim,
-                                skip_reason=f"アクセサリー/Lens: {acc_kw}",
-                                stock_status="OK" if src.in_stock else "在庫なし",
-                            )
-                            continue
-                        # カテゴリ除外チェック（Plushなのに本/雑誌など）
-                        should_exclude, excl_reason = check_category_exclusion(src.title, category_name)
-                        if should_exclude:
-                            category_excluded_count += 1
-                            # デバッグログ: カテゴリ除外（画像検索）
-                            add_debug_log(
-                                keyword=keyword,
-                                ebay_title=ebay_title,
-                                ebay_price=ebay_price,
-                                source_site=src.source_site,
-                                source_title=src.title,
-                                source_price=src.source_price_jpy,
-                                similarity=sim,
-                                skip_reason=f"カテゴリ不一致/Lens: {excl_reason}",
-                                stock_status="OK" if src.in_stock else "在庫なし",
-                            )
-                            continue
-                        valid_sources.append((src, sim, total))
-
-                    if category_excluded_count > 0 or stock_excluded_count > 0 or used_excluded_count > 0:
-                        print(f"    (カテゴリ除外: {category_excluded_count}件, 在庫なし除外: {stock_excluded_count}件, 中古品除外: {used_excluded_count}件)")
-
-                    if valid_sources:
-                        # スコア順にソートして上位3件を取得
-                        valid_sources.sort(key=lambda x: x[2], reverse=True)
-                        for src, sim, total in valid_sources[:3]:
-                            cond_score = calculate_condition_score(src.title, src.source_site)
-                            prio = calculate_source_priority(src.source_site)
-                            top_sources.append(RankedSource(
-                                source=src, score=total, similarity=sim,
-                                condition_score=cond_score, priority=prio
-                            ))
-                        best_source = top_sources[0].source
-                        best_sim = top_sources[0].similarity
-                        best_similarity_so_far = best_sim
-                        print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{best_sim:.0%}, 計{len(top_sources)}件)")
-                        search_method = "画像検索"
-
-                        # === SerpAPI節約: Lens成功時の早期終了 ===
-                        # 類似度60%以上かつ価格ありなら、後続検索をスキップ
-                        # ※40%だと誤爆が多い（画像類似でもタイトル全然違う商品を選んでしまう）
-                        LENS_SKIP_THRESHOLD = 0.60
-                        if best_sim >= LENS_SKIP_THRESHOLD and best_source.source_price_jpy > 0:
-                            skip_text_search = True
-                            print(f"    [API節約] 画像検索で良好な候補あり(類似度{best_sim:.0%}) → テキスト検索スキップ")
-                    else:
-                        print(f"    → 類似度閾値({MIN_IMAGE_SIMILARITY:.0%})未満のため選択なし、次のステップへ")
-                else:
-                    print(f"    → 有効な仕入先なし、次のステップへ")
-
-            # === 4. 英語でWeb検索（日本向け）===
+            # === 3. EN Web検索（日本向け）=== ← Lensより先（成功率11% vs Lens 3%）
             # ※日本語Web検索は成功率2%のため削除（Web EN: 11%）
-            if not top_sources and serpapi_client.is_enabled and ebay_title and not skip_text_search and not skip_lens_and_en:
+            skip_lens = skip_lens if 'skip_lens' in dir() else False
+            if not top_sources and serpapi_client.is_enabled and ebay_title and not skip_lens_and_en:
                 cleaned_query = clean_query_for_shopping(ebay_title)
-                print(f"  [Step 4] Web検索 (英語/日本向け)")
+                print(f"  [Step 3] Web検索 (英語/日本向け) ← Lensより先に実行")
                 print(f"    整形後: {cleaned_query[:60]}...")
                 web_condition = "new" if condition == "New" else "used"
                 print(f"    Condition: {web_condition}")
@@ -2927,7 +2724,7 @@ def main():
                 if all_sources:
                     zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
                     if zero_price_count > 0:
-                        print(f"    [Step 4b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        print(f"    [Step 3b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
                         scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
                         if scraped_count > 0:
                             print(f"    → {scraped_count}件の価格を取得しました")
@@ -2957,10 +2754,167 @@ def main():
                     )
                     if top_sources:
                         best_source = top_sources[0].source
+                        best_similarity_so_far = top_sources[0].similarity
                         search_method = "英語検索"
+                        skip_lens = True  # EN成功 → Lens不要
                         print(f"    → 選択: [{best_source.source_site}] (計{len(top_sources)}件)")
+                        print(f"    [API節約] EN検索で候補あり → Lensスキップ")
                     else:
                         print(f"    → 類似度閾値(30%)未満のため選択なし")
+
+            # === 4. Google Lens画像検索（最後の手段）===
+            # EN検索でも見つからなかった場合のみ実行（成功率3%だがEN未検出の商品を拾える可能性）
+            if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en and not skip_lens:
+                print(f"  [Step 4] Google Lens画像検索 (最後の手段)")
+                print(f"    Image URL: {image_url[:80]}...")
+                # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）
+                serpapi_condition = "new" if condition == "New" else "any"
+                print(f"    Condition: {serpapi_condition} → {'フリマ除外' if serpapi_condition == 'new' else '全サイト対象'}")
+                image_results = serpapi_client.search_by_image(image_url, condition=serpapi_condition, max_results=10)
+                log_serpapi_call("Google Lens", f"[IMAGE] {ebay_title[:30]}", len(image_results))
+
+                # ShoppingItemをSourceOfferに変換
+                MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
+                no_url_count = 0
+                no_price_count = 0
+                major_ec_no_price = 0
+                condition_skipped = 0
+                all_sources = []
+                for shop_item in image_results:
+                    if not shop_item.link:
+                        no_url_count += 1
+                        continue
+                    is_major_ec = any(domain in shop_item.link for domain in MAJOR_EC_DOMAINS)
+                    if shop_item.price <= 0:
+                        if is_major_ec:
+                            major_ec_no_price += 1
+                        else:
+                            no_price_count += 1
+                            continue
+                    if not is_valid_source_for_condition(shop_item.source, shop_item.link, condition):
+                        condition_skipped += 1
+                        continue
+                    all_sources.append(SourceOffer(
+                        source_site=shop_item.source,
+                        source_url=encode_url_with_japanese(shop_item.link),
+                        source_price_jpy=shop_item.price,
+                        source_shipping_jpy=0,
+                        stock_hint="画像検索",
+                        title=shop_item.title,
+                    ))
+
+                print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効")
+                if major_ec_no_price > 0:
+                    print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, 大手EC価格なし: {major_ec_no_price}, フリマ除外: {condition_skipped})")
+                else:
+                    print(f"    (URL無し: {no_url_count}, 価格0円: {no_price_count}, フリマ除外: {condition_skipped})")
+
+                if all_sources:
+                    zero_price_count = len([s for s in all_sources if s.source_price_jpy <= 0])
+                    if zero_price_count > 0:
+                        print(f"    [Step 4b] 価格0円アイテムを再取得中... ({zero_price_count}件)")
+                        scraped_count = try_scrape_zero_price_items(all_sources, max_scrape=5)
+                        if scraped_count > 0:
+                            print(f"    → {scraped_count}件の価格を取得しました")
+
+                if all_sources:
+                    print(f"    --- 候補一覧 (スコア順) ---")
+                    scored_sources = []
+                    for src in all_sources:
+                        sim = calculate_title_similarity(ebay_title, src.title)
+                        cond_score = calculate_condition_score(src.title, src.source_site)
+                        prio = calculate_source_priority(src.source_site)
+                        total = sim * cond_score * prio
+                        scored_sources.append((src, sim, cond_score, prio, total))
+                    scored_sources.sort(key=lambda x: x[4], reverse=True)
+
+                    for i, (src, sim, cond_score, prio, total) in enumerate(scored_sources[:5]):
+                        prio_label = "仕入" if prio >= 0.9 else "相場" if prio <= 0.6 else "中"
+                        print(f"    {i+1}. [{src.source_site}] JPY {src.source_price_jpy:,.0f}")
+                        print(f"       類似度:{sim:.0%} × 状態:{cond_score:.1f} × 優先:{prio:.1f}({prio_label}) = {total:.2f}")
+                        print(f"       {src.title[:50]}...")
+
+                    MIN_IMAGE_SIMILARITY = 0.35
+                    valid_sources = []
+                    category_excluded_count = 0
+                    stock_excluded_count = 0
+                    used_excluded_count = 0
+                    for src, sim, _, _, total in scored_sources:
+                        if sim < MIN_IMAGE_SIMILARITY:
+                            add_debug_log(
+                                keyword=keyword, ebay_title=ebay_title, ebay_price=ebay_price,
+                                source_site=src.source_site, source_title=src.title,
+                                source_price=src.source_price_jpy, similarity=sim,
+                                skip_reason=f"低類似度/Lens (閾値{MIN_IMAGE_SIMILARITY:.0%})",
+                                stock_status="OK" if src.in_stock else "在庫なし",
+                            )
+                            continue
+                        if not src.in_stock or src.stock_status in ["out_of_stock", "used_only"]:
+                            stock_excluded_count += 1
+                            add_debug_log(
+                                keyword=keyword, ebay_title=ebay_title, ebay_price=ebay_price,
+                                source_site=src.source_site, source_title=src.title,
+                                source_price=src.source_price_jpy, similarity=sim,
+                                skip_reason="在庫切れ/Lens",
+                                stock_status=src.stock_status or "out_of_stock",
+                            )
+                            continue
+                        if condition == "New":
+                            cond_score = calculate_condition_score(src.title, src.source_site)
+                            if cond_score < 0.5:
+                                used_excluded_count += 1
+                                add_debug_log(
+                                    keyword=keyword, ebay_title=ebay_title, ebay_price=ebay_price,
+                                    source_site=src.source_site, source_title=src.title,
+                                    source_price=src.source_price_jpy, similarity=sim,
+                                    skip_reason=f"中古品/Lens (cond={cond_score:.2f})",
+                                    stock_status="OK" if src.in_stock else "在庫なし",
+                                )
+                                continue
+                        is_acc, acc_kw = is_accessory_product(src.title)
+                        if is_acc:
+                            add_debug_log(
+                                keyword=keyword, ebay_title=ebay_title, ebay_price=ebay_price,
+                                source_site=src.source_site, source_title=src.title,
+                                source_price=src.source_price_jpy, similarity=sim,
+                                skip_reason=f"アクセサリー/Lens: {acc_kw}",
+                                stock_status="OK" if src.in_stock else "在庫なし",
+                            )
+                            continue
+                        should_exclude, excl_reason = check_category_exclusion(src.title, category_name)
+                        if should_exclude:
+                            category_excluded_count += 1
+                            add_debug_log(
+                                keyword=keyword, ebay_title=ebay_title, ebay_price=ebay_price,
+                                source_site=src.source_site, source_title=src.title,
+                                source_price=src.source_price_jpy, similarity=sim,
+                                skip_reason=f"カテゴリ不一致/Lens: {excl_reason}",
+                                stock_status="OK" if src.in_stock else "在庫なし",
+                            )
+                            continue
+                        valid_sources.append((src, sim, total))
+
+                    if category_excluded_count > 0 or stock_excluded_count > 0 or used_excluded_count > 0:
+                        print(f"    (カテゴリ除外: {category_excluded_count}件, 在庫なし除外: {stock_excluded_count}件, 中古品除外: {used_excluded_count}件)")
+
+                    if valid_sources:
+                        valid_sources.sort(key=lambda x: x[2], reverse=True)
+                        for src, sim, total in valid_sources[:3]:
+                            cond_score = calculate_condition_score(src.title, src.source_site)
+                            prio = calculate_source_priority(src.source_site)
+                            top_sources.append(RankedSource(
+                                source=src, score=total, similarity=sim,
+                                condition_score=cond_score, priority=prio
+                            ))
+                        best_source = top_sources[0].source
+                        best_sim = top_sources[0].similarity
+                        best_similarity_so_far = best_sim
+                        print(f"    → 選択: [{best_source.source_site}] JPY {best_source.source_price_jpy:,.0f} (類似度:{best_sim:.0%}, 計{len(top_sources)}件)")
+                        search_method = "画像検索"
+                    else:
+                        print(f"    → 類似度閾値({MIN_IMAGE_SIMILARITY:.0%})未満のため選択なし")
+                else:
+                    print(f"    → 有効な仕入先なし")
 
             # 結果判定
             error_reason = None

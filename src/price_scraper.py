@@ -451,6 +451,18 @@ class PriceScraper:
                 price = self._extract_amazon_price(html)
 
                 if price > 0:
+                    # 中古品の価格を新品として取得してしまうケースの追加チェック
+                    # 中古マーカーが含まれるページで異常に安い場合は中古品の可能性が高い
+                    has_used_marker = bool(re.search(
+                        r'中古品|中古商品|Used|マーケットプレイス|コレクター商品',
+                        html, re.IGNORECASE
+                    ))
+                    if has_used_marker and price < 500:
+                        print(f"    [Scrape] Amazon: 中古品の可能性 (JPY {price:,.0f} + 中古マーカー検出) → スキップ")
+                        return ScrapedPrice(
+                            price=0, success=False, error_message="Likely used item price",
+                            in_stock=False, stock_status="used_only"
+                        )
                     print(f"    [Scrape] Amazon price found: JPY {price:,.0f}")
                     return ScrapedPrice(
                         price=price, currency="JPY", source="Amazon",
@@ -495,6 +507,10 @@ class PriceScraper:
                     if data.get("@type") == "Product":
                         offers = data.get("offers", {})
                         if isinstance(offers, dict):
+                            # 中古品の価格を除外（itemConditionチェック）
+                            condition = offers.get("itemCondition", "")
+                            if "Used" in str(condition) or "Refurbished" in str(condition):
+                                continue
                             price = offers.get("price") or offers.get("lowPrice")
                             if price:
                                 val = float(str(price).replace(',', ''))
@@ -502,6 +518,10 @@ class PriceScraper:
                                     main_prices.append(val)
                         elif isinstance(offers, list):
                             for offer in offers:
+                                # 中古品の価格を除外
+                                condition = offer.get("itemCondition", "")
+                                if "Used" in str(condition) or "Refurbished" in str(condition):
+                                    continue
                                 price = offer.get("price") or offer.get("lowPrice")
                                 if price:
                                     val = float(str(price).replace(',', ''))
@@ -608,6 +628,11 @@ class PriceScraper:
             r"中古商品",
             r"マーケットプレイス",    # マーケットプレイスの出品者から購入
             r"コレクター商品",        # コレクター商品（中古）
+            r"中古品\s*¥",           # 「中古品 ¥375」のような直接表示
+            r"中古品\s*￥",
+            r"¥[\d,]+\s*より\s*中古", # 「¥375 より 中古」
+            r'"UsedLike\w*"',        # JSON内の中古コンディション
+            r'"itemCondition"[^}]*Used',  # 構造化データの中古品マーカー
         ]
         has_used = any(re.search(p, html, re.IGNORECASE) for p in used_only_patterns)
 

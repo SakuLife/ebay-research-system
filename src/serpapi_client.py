@@ -173,6 +173,18 @@ class SerpApiClient:
         "ebay.co.uk",
         "ebay.de",
         "google.com",       # Googleリダイレクト
+        # 海外ECサイト（日本国内仕入先ではない）
+        "walmart.com",      # Walmart（米国）
+        "target.com",       # Target（米国）
+        "bestbuy.com",      # Best Buy（米国）
+        "costco.com",       # Costco（米国）
+        "etsy.com",         # Etsy（海外ハンドメイド）
+        "wish.com",         # Wish（海外格安EC）
+        "temu.com",         # Temu（海外格安EC）
+        "shein.com",        # SHEIN（海外ファッションEC）
+        "wayfair.com",      # Wayfair（米国家具EC）
+        "overstock.com",    # Overstock（米国EC）
+        "newegg.com",       # Newegg（米国PC系EC）
     ]
 
     # 購入不可サイト（商品紹介のみ、通販機能なし）

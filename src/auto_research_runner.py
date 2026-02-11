@@ -2480,7 +2480,8 @@ def main():
 
             # === Gemini画像分析: カード/セット/一番くじ等を早期検出 ===
             # カテゴリスキップされなかった場合でも、画像から判定可能
-            if condition == "New" and image_url:
+            # New/Used両方で実行（SerpAPI節約のため早期フィルタリング）
+            if image_url:
                 gemini_analyzer = GeminiClient()
                 if gemini_analyzer.is_enabled:
                     image_analysis = gemini_analyzer.analyze_ebay_item_image(

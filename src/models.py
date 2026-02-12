@@ -18,6 +18,7 @@ class ListingCandidate:
     ebay_title: str = ""
     currency: str = "USD"
     image_url: str = ""  # 商品画像URL（Google Lens検索用）
+    ebay_condition: str = ""  # eBayアイテムのコンディション（New/Used等）
 
 
 @dataclass

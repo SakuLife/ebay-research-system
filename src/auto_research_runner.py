@@ -2292,7 +2292,7 @@ def main():
 
         if serpapi_client.is_enabled:
             # Map condition to eBay condition filter
-            ebay_condition = "new" if condition == "New" else "any"
+            ebay_condition = "new" if condition == "New" else "used"
             print(f"  [eBay] Location filter: {item_location}, Condition: {ebay_condition}")
 
             # 出力目標数を達成するため、余裕を持って検索（処理済みスキップ分を考慮）
@@ -2327,6 +2327,7 @@ def main():
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
                     category_id=sold_item.category_id,
                     category_name=sold_item.category_name,
+                    ebay_condition=sold_item.condition,  # eBayコンディション
                 ))
 
         if sold_items:
@@ -2422,6 +2423,18 @@ def main():
                 skip_reasons["already_processed"] += 1
                 skipped_this_keyword += 1
                 continue
+
+            # Used検索時にNewアイテムをスキップ（SerpApiフィルター漏れ対策）
+            ebay_item_condition = getattr(item, 'ebay_condition', '') or ''
+            if condition != "New" and ebay_item_condition:
+                cond_lower = ebay_item_condition.lower()
+                if cond_lower in ["new", "brand new", "new with tags",
+                                  "new with box", "new without tags", "new other"]:
+                    print(f"\n  [SKIP] eBay condition is '{ebay_item_condition}' (searching for Used)")
+                    print(f"         Title: {ebay_title[:60]}...")
+                    skip_reasons["other"] += 1
+                    skipped_this_keyword += 1
+                    continue
 
             # 同一キーワード内でのタイトル重複チェック（出品者違いの同一商品を排除）
             if ebay_title and output_ebay_titles:

@@ -421,10 +421,13 @@ class SerpApiClient:
             print(f"  [SerpApi] Filtering by location: {item_location} (code={location_code})")
 
         # Add condition filter
-        # LH_ItemCondition: 1000=New, 1500=Open box, 3000=Used, 7000=For parts
+        # LH_ItemCondition: 1000=New, 1500=Open box, 2500=Seller refurbished, 3000=Used, 7000=For parts
         if condition.lower() == "new":
             params["LH_ItemCondition"] = "1000"
             print(f"  [SerpApi] Filtering by condition: New only (LH_ItemCondition=1000)")
+        elif condition.lower() == "used":
+            params["LH_ItemCondition"] = "1500|2500|3000"
+            print(f"  [SerpApi] Filtering by condition: Used/Open Box (LH_ItemCondition=1500|2500|3000)")
 
         try:
             print(f"  [SerpApi] Searching sold items: '{search_keyword[:60]}...' on {ebay_domain}" if len(search_keyword) > 60 else f"  [SerpApi] Searching sold items: '{search_keyword}' on {ebay_domain}")
@@ -514,6 +517,15 @@ class SerpApiClient:
                             r'\bused\b',           # USED
                         ]
                         if any(re.search(pattern, title_lower) for pattern in used_title_patterns):
+                            continue
+
+                    # Used条件の場合、Newアイテムをスキップ
+                    elif condition.lower() == "used":
+                        condition_lower = item_condition.lower()
+                        # コンディション欄が明確にNewの場合スキップ
+                        if condition_lower in ["new", "brand new", "new with tags",
+                                                "new with box", "new without tags",
+                                                "new other"]:
                             continue
 
                     # カテゴリ情報を取得（SerpApiの結果に含まれている場合）

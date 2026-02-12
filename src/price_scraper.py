@@ -3,6 +3,7 @@
 import re
 import random
 import time
+import threading
 import requests
 from typing import Optional
 from dataclasses import dataclass
@@ -1055,7 +1056,10 @@ class HeadlessPriceScraper:
             try:
                 from playwright.sync_api import sync_playwright
                 self._playwright = sync_playwright().start()
-                self._browser = self._playwright.chromium.launch(headless=True)
+                self._browser = self._playwright.chromium.launch(
+                    headless=True,
+                    timeout=15000,  # ブラウザ起動タイムアウト15秒
+                )
             except Exception as e:
                 print(f"    [Headless] Failed to start browser: {e}")
                 raise
@@ -1090,7 +1094,7 @@ class HeadlessPriceScraper:
             page.set_default_timeout(15000)  # 15秒タイムアウト
 
             print(f"    [Headless] Navigating to page...")
-            page.goto(url, wait_until="domcontentloaded")
+            page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
             # ページが安定するまで少し待つ
             page.wait_for_timeout(2000)
@@ -1256,14 +1260,30 @@ def scrape_price_with_fallback(url: str, current_price: float = 0) -> ScrapedPri
     if not result.in_stock:
         return result
 
-    # Headlessフォールバック
+    # Headlessフォールバック（30秒タイムアウト付き）
     print(f"    [Fallback] Trying headless browser...")
-    try:
-        headless_result = get_headless_scraper().scrape_price_headless(url)
+    headless_result_container: list = []
+    headless_error_container: list = []
+
+    def _run_headless():
+        try:
+            hr = get_headless_scraper().scrape_price_headless(url)
+            headless_result_container.append(hr)
+        except Exception as e:
+            headless_error_container.append(e)
+
+    headless_thread = threading.Thread(target=_run_headless, daemon=True)
+    headless_thread.start()
+    headless_thread.join(timeout=30)  # 最大30秒で打ち切り
+
+    if headless_thread.is_alive():
+        print(f"    [Fallback] Headless timeout (30s) → skipping")
+    elif headless_error_container:
+        print(f"    [Fallback] Headless failed: {headless_error_container[0]}")
+    elif headless_result_container:
+        headless_result = headless_result_container[0]
         if headless_result.success and headless_result.price > 0:
             return headless_result
-    except Exception as e:
-        print(f"    [Fallback] Headless failed: {e}")
 
     # どちらも失敗した場合は元の結果を返す
     return result

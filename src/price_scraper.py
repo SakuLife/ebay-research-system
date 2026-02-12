@@ -610,7 +610,7 @@ class PriceScraper:
             "Out of Stock",
             "Currently unavailable",
             "id=\"outOfStock\"",
-            'id="availability"[^>]*>\s*(?:<[^>]*>)*\s*(?:現在在庫切れ|在庫切れ)',
+            r'id="availability"[^>]*>\s*(?:<[^>]*>)*\s*(?:現在在庫切れ|在庫切れ)',
             '"availability"\\s*:\\s*"https://schema.org/OutOfStock"',
         ]
 

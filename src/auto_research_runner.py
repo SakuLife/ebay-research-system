@@ -2729,6 +2729,7 @@ def main():
                         source_shipping_jpy=0,
                         stock_hint="Web検索",
                         title=shop_item.title,
+                        source_image_url=getattr(shop_item, 'thumbnail', '') or '',
                     ))
 
                 priced = len([s for s in all_sources if s.source_price_jpy > 0])
@@ -2815,6 +2816,7 @@ def main():
                         source_shipping_jpy=0,
                         stock_hint="画像検索",
                         title=shop_item.title,
+                        source_image_url=getattr(shop_item, 'thumbnail', '') or '',
                     ))
 
                 print(f"    結果: {len(image_results)}件取得 → {len(all_sources)}件有効")
@@ -3202,6 +3204,18 @@ def main():
                                     condition=condition
                                 )
                                 if retry_validation and retry_validation.suggestion == "accept":
+                                    # 画像比較も実施
+                                    next_src_img = getattr(next_src, 'source_image_url', '') or ''
+                                    if image_url and next_src_img:
+                                        img_check = gemini_validator.compare_product_images(
+                                            ebay_image_url=image_url,
+                                            source_image_url=next_src_img,
+                                            ebay_title=ebay_title,
+                                            source_title=next_src.title,
+                                        )
+                                        if img_check is False:
+                                            print(f"  [RETRY {retry_idx}] 画像不一致 → 次へ")
+                                            continue
                                     print(f"  [RETRY {retry_idx}] Gemini検証OK → 採用")
                                     best_source = next_src
                                     total_source_price = next_price
@@ -3216,7 +3230,63 @@ def main():
                                 print(f"  [Gemini検証] → 全候補NG、スキップ")
                                 best_source = None
                                 error_reason = "Gemini検証NG"
-                        # accept の場合はそのまま進む
+                        # accept の場合、画像比較で追加チェック
+                        source_img = getattr(best_source, 'source_image_url', '') or ''
+                        if image_url and source_img:
+                            print(f"  [Gemini画像比較] eBay vs 仕入先の画像を比較中...")
+                            img_match = gemini_validator.compare_product_images(
+                                ebay_image_url=image_url,
+                                source_image_url=source_img,
+                                ebay_title=ebay_title,
+                                source_title=best_source.title,
+                            )
+                            if img_match is False:
+                                print(f"  [Gemini画像比較] → デザイン/外観不一致、次の候補を試行")
+                                # 画像不一致 → 残りの候補を試行
+                                found_valid = False
+                                for retry_idx in range(1, len(working_candidates)):
+                                    next_candidate = working_candidates[retry_idx]
+                                    next_src = next_candidate["ranked_src"].source
+                                    next_price = next_candidate["adjusted_price"]
+                                    next_src_img = getattr(next_src, 'source_image_url', '') or ''
+                                    print(f"  [RETRY {retry_idx}] {next_src.source_site} - JPY {next_price:.0f}")
+
+                                    # テキスト検証
+                                    retry_validation = gemini_validator.validate_source_match(
+                                        ebay_title=ebay_title,
+                                        ebay_price_usd=ebay_price,
+                                        source_title=next_src.title,
+                                        source_url=next_src.source_url,
+                                        source_price_jpy=next_price,
+                                        source_site=next_src.source_site,
+                                        condition=condition
+                                    )
+                                    if retry_validation and retry_validation.suggestion == "accept":
+                                        # 画像比較も実施
+                                        if next_src_img:
+                                            img_match2 = gemini_validator.compare_product_images(
+                                                ebay_image_url=image_url,
+                                                source_image_url=next_src_img,
+                                                ebay_title=ebay_title,
+                                                source_title=next_src.title,
+                                            )
+                                            if img_match2 is False:
+                                                print(f"  [RETRY {retry_idx}] 画像不一致 → 次へ")
+                                                continue
+                                        print(f"  [RETRY {retry_idx}] Gemini検証+画像OK → 採用")
+                                        best_source = next_src
+                                        total_source_price = next_price
+                                        similarity = next_candidate["ranked_src"].similarity
+                                        found_valid = True
+                                        break
+                                    else:
+                                        retry_reason = retry_validation.reason[:40] if retry_validation else "検証失敗"
+                                        print(f"  [RETRY {retry_idx}] Gemini検証NG: {retry_reason}")
+
+                                if not found_valid:
+                                    print(f"  [Gemini画像比較] → 全候補で画像不一致、スキップ")
+                                    best_source = None
+                                    error_reason = "Gemini検証NG"
                     else:
                         # Gemini検証失敗（APIエラー等）→ 要確認としてマーク
                         print(f"    [WARN] Gemini検証失敗 → 要確認")

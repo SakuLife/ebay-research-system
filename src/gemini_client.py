@@ -771,6 +771,79 @@ DETAILS: [画像から読み取った詳細（1行）]
             print(f"  [WARN] Failed to parse image analysis result: {e}")
             return None
 
+    def compare_product_images(
+        self,
+        ebay_image_url: str,
+        source_image_url: str,
+        ebay_title: str,
+        source_title: str,
+    ) -> Optional[bool]:
+        """
+        eBay商品画像と仕入先商品画像をGeminiで比較し、同一商品かを判定する.
+
+        Args:
+            ebay_image_url: eBay商品の画像URL
+            source_image_url: 仕入先商品の画像URL
+            ebay_title: eBay商品タイトル
+            source_title: 仕入先商品タイトル
+
+        Returns:
+            True: 同一商品、False: 別商品、None: 判定失敗
+        """
+        if not self.is_enabled or not ebay_image_url or not source_image_url:
+            return None
+
+        prompt = f'''2つの商品画像を比較し、同一商品かどうかを判定してください。
+
+【eBay商品】
+タイトル: {ebay_title}
+
+【仕入先商品】
+タイトル: {source_title}
+
+【判定基準】
+- 同じ商品の同じバリエーション（色・柄・デザイン）→ MATCH
+- 同じブランド・シリーズだがデザイン/色/柄が違う → MISMATCH
+- 明らかに別商品 → MISMATCH
+- 画像が不鮮明で判定困難 → UNCERTAIN
+
+【出力形式】
+RESULT: [MATCH/MISMATCH/UNCERTAIN]
+REASON: [1行で理由]'''
+
+        try:
+            response = self.model.generate_content([
+                prompt,
+                {"url": ebay_image_url},
+                {"url": source_image_url},
+            ])
+            result = response.text.strip()
+            _log_gemini_call("image_compare", len(prompt) // 4 + 1000, len(result) // 4)
+
+            # パース
+            for line in result.split('\n'):
+                line = line.strip()
+                if line.upper().startswith('RESULT:'):
+                    value = line.split(':', 1)[1].strip().upper()
+                    if 'MATCH' in value and 'MIS' not in value:
+                        print(f"  [Gemini画像比較] MATCH: {result.split(chr(10))[-1] if chr(10) in result else result}")
+                        return True
+                    elif 'MISMATCH' in value:
+                        reason = ""
+                        for l2 in result.split('\n'):
+                            if l2.strip().upper().startswith('REASON:'):
+                                reason = l2.split(':', 1)[1].strip()
+                        print(f"  [Gemini画像比較] MISMATCH: {reason}")
+                        return False
+                    else:
+                        print(f"  [Gemini画像比較] UNCERTAIN: 判定不能")
+                        return None
+            print(f"  [Gemini画像比較] パース失敗: {result[:100]}")
+            return None
+        except Exception as e:
+            print(f"  [WARN] Gemini image compare failed: {e}")
+            return None
+
     def analyze_web_prescreen(
         self,
         ebay_title: str,

@@ -187,6 +187,8 @@ class RakutenClient:
         url = item.get("itemUrl", "")
         availability = item.get("availability", 0)
         item_name = item.get("itemName", "")
+        image_urls = item.get("mediumImageUrls", [])
+        image_url = image_urls[0].get("imageUrl", "") if image_urls else ""
         return SourceOffer(
             source_site="Rakuten",
             source_url=url,
@@ -194,6 +196,7 @@ class RakutenClient:
             source_shipping_jpy=0.0,
             stock_hint="in_stock" if availability == 1 else "unknown",
             title=item_name,
+            source_image_url=image_url,
         )
 
     def search_multiple(self, keyword: str, max_results: int = 5) -> List[SourceOffer]:
@@ -231,6 +234,9 @@ class RakutenClient:
             url = item.get("itemUrl", "")
             availability = item.get("availability", 0)
             item_name = item.get("itemName", "")
+            # 商品画像URL取得（Gemini画像比較用）
+            image_urls = item.get("mediumImageUrls", [])
+            image_url = image_urls[0].get("imageUrl", "") if image_urls else ""
 
             if price > 0 and url:
                 offers.append(SourceOffer(
@@ -240,6 +246,7 @@ class RakutenClient:
                     source_shipping_jpy=0.0,
                     stock_hint="in_stock" if availability == 1 else "unknown",
                     title=item_name,
+                    source_image_url=image_url,
                 ))
 
         # Sort by price and return top N

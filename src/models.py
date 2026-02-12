@@ -31,6 +31,7 @@ class SourceOffer:
     title: str = ""
     in_stock: bool = True  # 在庫あり（デフォルト）
     stock_status: str = "unknown"  # "in_stock", "out_of_stock", "unknown"
+    source_image_url: str = ""  # 仕入先商品画像URL（Gemini画像比較用）
 
 
 @dataclass

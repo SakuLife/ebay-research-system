@@ -187,13 +187,15 @@ class RakutenClient:
         url = item.get("itemUrl", "")
         availability = item.get("availability", 0)
         item_name = item.get("itemName", "")
+        postage_flag = item.get("postageFlag", 0)
+        shipping = 0.0 if postage_flag == 1 else 700.0
         image_urls = item.get("mediumImageUrls", [])
         image_url = image_urls[0].get("imageUrl", "") if image_urls else ""
         return SourceOffer(
             source_site="Rakuten",
             source_url=url,
             source_price_jpy=price,
-            source_shipping_jpy=0.0,
+            source_shipping_jpy=shipping,
             stock_hint="in_stock" if availability == 1 else "unknown",
             title=item_name,
             source_image_url=image_url,
@@ -234,6 +236,9 @@ class RakutenClient:
             url = item.get("itemUrl", "")
             availability = item.get("availability", 0)
             item_name = item.get("itemName", "")
+            # 送料: postageFlag=1は送料無料、0は有料（デフォルト700円推定）
+            postage_flag = item.get("postageFlag", 0)
+            shipping = 0.0 if postage_flag == 1 else 700.0
             # 商品画像URL取得（Gemini画像比較用）
             image_urls = item.get("mediumImageUrls", [])
             image_url = image_urls[0].get("imageUrl", "") if image_urls else ""
@@ -243,14 +248,14 @@ class RakutenClient:
                     source_site="Rakuten",
                     source_url=url,
                     source_price_jpy=price,
-                    source_shipping_jpy=0.0,
+                    source_shipping_jpy=shipping,
                     stock_hint="in_stock" if availability == 1 else "unknown",
                     title=item_name,
                     source_image_url=image_url,
                 ))
 
-        # Sort by price and return top N
-        offers.sort(key=lambda o: o.source_price_jpy)
+        # Sort by total price (price + shipping) and return top N
+        offers.sort(key=lambda o: o.source_price_jpy + o.source_shipping_jpy)
         return offers[:max_results]
 
 

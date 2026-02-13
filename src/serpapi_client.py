@@ -357,7 +357,8 @@ class SerpApiClient:
         min_price: float = 0,
         max_results: int = 20,
         item_location: str = "japan",
-        condition: str = "any"
+        condition: str = "any",
+        page: int = 1
     ) -> List[SoldItem]:
         """
         eBayで売れた商品（完了したリスティング）を検索する.
@@ -407,6 +408,7 @@ class SerpApiClient:
             "LH_Sold": "1",       # 売れた商品
             "LH_Complete": "1",   # 完了したリスティング
             "_ipg": str(min(max_results * 2, 60)),  # 余裕を持って取得
+            "_pgn": str(page),  # ページ番号（1始まり）
             "api_key": self.api_key
         }
 

@@ -2381,6 +2381,9 @@ def main():
         items_output_this_keyword = 0
         skipped_this_keyword = 0  # このキーワードでのスキップ数
         output_ebay_titles = []   # このキーワードで出力済みのeBayタイトル（重複検出用）
+        page2_fetched = False     # 2ページ目取得済みフラグ
+        page1_count = len(active_items)  # 1ページ目の件数
+        item_loop_idx = 0         # ループカウンタ
 
         for item in active_items:
             # 出力目標に達したら終了
@@ -2393,6 +2396,48 @@ def main():
                 print(f"\n  [TIMEOUT] 経過時間 {elapsed/60:.1f}分 → このキーワードの処理を中断")
                 timeout_reached = True
                 break
+
+            # === 2ページ目の自動取得 ===
+            # 残りアイテムが5件以下で目標未達、かつ1ページ目が50件以上あった場合
+            item_loop_idx += 1
+            items_remaining = len(active_items) - item_loop_idx
+            if (not page2_fetched
+                    and items_remaining <= 5
+                    and items_output_this_keyword < items_per_keyword
+                    and page1_count >= 50
+                    and serpapi_client.is_enabled):
+                page2_fetched = True
+                print(f"\n  [PAGE 2] 目標未達 ({items_output_this_keyword}/{items_per_keyword}), 残り{items_remaining}件 → 2ページ目取得")
+                page2_results = serpapi_client.search_sold_items(
+                    keyword, market=market, min_price=min_price_local,
+                    max_results=search_buffer, item_location=item_location,
+                    condition=ebay_condition, page=2
+                )
+                log_serpapi_call("eBay Sold P2", keyword, len(page2_results))
+                if page2_results:
+                    page2_added = 0
+                    for sold_item in page2_results:
+                        usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
+                        usd_rate = usd_rates.get(sold_item.currency, 1.0)
+                        price_usd = sold_item.price * usd_rate
+                        active_items.append(ListingCandidate(
+                            candidate_id=sold_item.item_id,
+                            search_query=keyword,
+                            ebay_item_url=sold_item.link,
+                            ebay_price=price_usd,
+                            ebay_shipping=0.0,
+                            sold_signal=1,
+                            ebay_title=sold_item.title,
+                            currency=sold_item.currency,
+                            image_url=sold_item.thumbnail,
+                            category_id=sold_item.category_id,
+                            category_name=sold_item.category_name,
+                            ebay_condition=sold_item.condition,
+                        ))
+                        page2_added += 1
+                    print(f"  [PAGE 2] {page2_added}件追加 → 合計{len(active_items)}件")
+                else:
+                    print(f"  [PAGE 2] 追加結果なし")
             ebay_url = item.ebay_item_url
             ebay_price = item.ebay_price
             ebay_shipping = item.ebay_shipping

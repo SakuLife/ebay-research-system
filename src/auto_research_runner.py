@@ -2126,6 +2126,25 @@ def main():
             "results": results_count
         })
 
+    # === 実績トラッキング ===
+    search_stats = {
+        "web_en": {"calls": 0, "total_results": 0, "adopted": 0},   # Web(EN)検索
+        "lens": {"calls": 0, "total_results": 0, "adopted": 0},     # Google Lens
+        "rakuten": {"calls": 0, "total_results": 0, "adopted": 0},  # 楽天API
+    }
+    gemini_stats = {
+        "validate_ok": 0,       # テキスト検証: accept
+        "validate_ng": 0,       # テキスト検証: skip/retry
+        "validate_error": 0,    # テキスト検証: API失敗
+        "image_compare_match": 0,    # 画像比較: MATCH
+        "image_compare_mismatch": 0, # 画像比較: MISMATCH
+        "image_compare_error": 0,    # 画像比較: 失敗/判定不能
+        "image_analysis_skip": 0,    # 画像分析: スキップ判定
+        "image_analysis_pass": 0,    # 画像分析: 通過
+        "translate_ok": 0,      # 翻訳: 成功
+        "translate_error": 0,   # 翻訳: 失敗
+    }
+
     # Gemini使用量をリセット
     reset_gemini_usage()
 
@@ -2549,12 +2568,15 @@ def main():
                         search_keyword=raw_keyword  # 検索キーワードとの不一致検出用
                     )
                     if image_analysis and image_analysis.should_skip and image_analysis.confidence in ["high", "medium"]:
+                        gemini_stats["image_analysis_skip"] += 1
                         print(f"\n  [SKIP] Gemini image analysis: {image_analysis.skip_reason}")
                         print(f"         Type: {image_analysis.product_type} (confidence: {image_analysis.confidence})")
                         print(f"         Title: {ebay_title[:50]}...")
                         skip_reasons["limited_product"] += 1
                         skipped_this_keyword += 1
                         continue
+                    else:
+                        gemini_stats["image_analysis_pass"] += 1
 
             print(f"\n  Processing: {ebay_url}")
             print(f"  [INFO] eBay title: {ebay_title[:60]}..." if len(ebay_title) > 60 else f"  [INFO] eBay title: {ebay_title}")
@@ -2621,8 +2643,10 @@ def main():
                 if gemini_client.is_enabled and cleaned_title:
                     japanese_query = gemini_client.translate_product_name(cleaned_title)
                     if japanese_query:
+                        gemini_stats["translate_ok"] += 1
                         print(f"  [Step 1] Gemini翻訳: {japanese_query}")
                     else:
+                        gemini_stats["translate_error"] += 1
                         print(f"  [Step 1] Gemini翻訳失敗")
                 if not japanese_query:
                     japanese_query = extract_search_keywords(ebay_title) if ebay_title else keyword
@@ -2636,6 +2660,8 @@ def main():
                     print(f"  [Step 2] 楽天API検索 (コスト0)")
                     print(f"    検索クエリ: {japanese_query}")
                     rakuten_offers = rakuten_client.search_multiple(japanese_query, max_results=10)
+                    search_stats["rakuten"]["calls"] += 1
+                    search_stats["rakuten"]["total_results"] += len(rakuten_offers)
                     print(f"    結果: {len(rakuten_offers)}件")
 
                     # 0件で長いクエリの場合、Geminiで必須キーワードを抽出してリトライ
@@ -2764,6 +2790,8 @@ def main():
 
                 web_results = serpapi_client.search_google_web_jp(cleaned_query, condition=web_condition, max_results=10)
                 log_serpapi_call("Web(EN)", cleaned_query, len(web_results))
+                search_stats["web_en"]["calls"] += 1
+                search_stats["web_en"]["total_results"] += len(web_results)
 
                 all_sources = []
                 for shop_item in web_results:
@@ -2832,6 +2860,8 @@ def main():
                 print(f"    Condition: {serpapi_condition} → {'フリマ除外' if serpapi_condition == 'new' else '全サイト対象'}")
                 image_results = serpapi_client.search_by_image(image_url, condition=serpapi_condition, max_results=10)
                 log_serpapi_call("Google Lens", f"[IMAGE] {ebay_title[:30]}", len(image_results))
+                search_stats["lens"]["calls"] += 1
+                search_stats["lens"]["total_results"] += len(image_results)
 
                 # ShoppingItemをSourceOfferに変換
                 MAJOR_EC_DOMAINS = ["amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"]
@@ -3174,6 +3204,14 @@ def main():
                             excluded = len(candidates_with_qty) - len(valid_candidates)
                             print(f"\n  [数量チェック結果] {excluded}件を除外、{len(valid_candidates)}件が有効")
 
+                        # 検索メソッド別の採用実績を記録
+                        if search_method == "楽天API":
+                            search_stats["rakuten"]["adopted"] += 1
+                        elif search_method == "英語検索":
+                            search_stats["web_en"]["adopted"] += 1
+                        elif search_method == "画像検索":
+                            search_stats["lens"]["adopted"] += 1
+
                         # 価格確認が必要かどうか
                         if total_source_price <= 0:
                             needs_price_check = True
@@ -3226,6 +3264,11 @@ def main():
                         if validation.issues:
                             print(f"    問題: {', '.join(validation.issues)}")
 
+                        if validation.suggestion == "accept":
+                            gemini_stats["validate_ok"] += 1
+                        else:
+                            gemini_stats["validate_ng"] += 1
+
                         if validation.suggestion in ("skip", "retry"):
                             # skip/retryの場合、残りの候補を順番にGemini検証
                             reason_label = "別商品" if validation.suggestion == "skip" else "要再試行"
@@ -3258,9 +3301,14 @@ def main():
                                             ebay_title=ebay_title,
                                             source_title=next_src.title,
                                         )
-                                        if img_check is False:
+                                        if img_check is True:
+                                            gemini_stats["image_compare_match"] += 1
+                                        elif img_check is False:
+                                            gemini_stats["image_compare_mismatch"] += 1
                                             print(f"  [RETRY {retry_idx}] 画像不一致 → 次へ")
                                             continue
+                                        else:
+                                            gemini_stats["image_compare_error"] += 1
                                     print(f"  [RETRY {retry_idx}] Gemini検証OK → 採用")
                                     best_source = next_src
                                     total_source_price = next_price
@@ -3285,6 +3333,12 @@ def main():
                                 ebay_title=ebay_title,
                                 source_title=best_source.title,
                             )
+                            if img_match is True:
+                                gemini_stats["image_compare_match"] += 1
+                            elif img_match is False:
+                                gemini_stats["image_compare_mismatch"] += 1
+                            else:
+                                gemini_stats["image_compare_error"] += 1
                             if img_match is False:
                                 print(f"  [Gemini画像比較] → デザイン/外観不一致、次の候補を試行")
                                 # 画像不一致 → 残りの候補を試行
@@ -3315,9 +3369,14 @@ def main():
                                                 ebay_title=ebay_title,
                                                 source_title=next_src.title,
                                             )
-                                            if img_match2 is False:
+                                            if img_match2 is True:
+                                                gemini_stats["image_compare_match"] += 1
+                                            elif img_match2 is False:
+                                                gemini_stats["image_compare_mismatch"] += 1
                                                 print(f"  [RETRY {retry_idx}] 画像不一致 → 次へ")
                                                 continue
+                                            else:
+                                                gemini_stats["image_compare_error"] += 1
                                         print(f"  [RETRY {retry_idx}] Gemini検証+画像OK → 採用")
                                         best_source = next_src
                                         total_source_price = next_price
@@ -3334,6 +3393,7 @@ def main():
                                     error_reason = "Gemini検証NG"
                     else:
                         # Gemini検証失敗（APIエラー等）→ 要確認としてマーク
+                        gemini_stats["validate_error"] += 1
                         print(f"    [WARN] Gemini検証失敗 → 要確認")
                         error_reason = "要確認: Gemini検証失敗"
 
@@ -3755,6 +3815,58 @@ def main():
             print(f"  Estimated savings: ${saved_usd:.0f}")
     except ImportError:
         pass
+
+    # === 検索実績サマリー ===
+    total_search_calls = sum(s["calls"] for s in search_stats.values())
+    total_adopted = sum(s["adopted"] for s in search_stats.values())
+    if total_search_calls > 0:
+        print(f"\n--- Search Method Performance ---")
+        print(f"  {'Method':<12} {'Calls':>6} {'Results':>8} {'Adopted':>8} {'Rate':>8}")
+        print(f"  {'-'*12} {'-'*6} {'-'*8} {'-'*8} {'-'*8}")
+        for method_name, stats in search_stats.items():
+            calls = stats["calls"]
+            results = stats["total_results"]
+            adopted = stats["adopted"]
+            rate = f"{adopted/calls*100:.1f}%" if calls > 0 else "-"
+            avg_results = f"{results/calls:.1f}" if calls > 0 else "-"
+            label = {"web_en": "Web(EN)", "lens": "Lens", "rakuten": "Rakuten"}[method_name]
+            print(f"  {label:<12} {calls:>6} {results:>8} {adopted:>8} {rate:>8}")
+        print(f"  {'-'*12} {'-'*6} {'-'*8} {'-'*8} {'-'*8}")
+        print(f"  {'Total':<12} {total_search_calls:>6} {'-':>8} {total_adopted:>8} {total_adopted/total_search_calls*100:.1f}%" if total_search_calls > 0 else "")
+
+    # === Gemini実績サマリー ===
+    total_gemini_ops = (
+        gemini_stats["validate_ok"] + gemini_stats["validate_ng"] + gemini_stats["validate_error"]
+        + gemini_stats["translate_ok"] + gemini_stats["translate_error"]
+        + gemini_stats["image_compare_match"] + gemini_stats["image_compare_mismatch"] + gemini_stats["image_compare_error"]
+        + gemini_stats["image_analysis_skip"] + gemini_stats["image_analysis_pass"]
+    )
+    if total_gemini_ops > 0:
+        print(f"\n--- Gemini Performance ---")
+
+        # 翻訳
+        tr_total = gemini_stats["translate_ok"] + gemini_stats["translate_error"]
+        if tr_total > 0:
+            tr_rate = gemini_stats["translate_ok"] / tr_total * 100
+            print(f"  Translate:     {tr_total:>4} calls  (OK: {gemini_stats['translate_ok']}, Error: {gemini_stats['translate_error']}, Rate: {tr_rate:.0f}%)")
+
+        # 画像分析（スキップ判定）
+        ia_total = gemini_stats["image_analysis_skip"] + gemini_stats["image_analysis_pass"]
+        if ia_total > 0:
+            ia_skip_rate = gemini_stats["image_analysis_skip"] / ia_total * 100
+            print(f"  Image Filter:  {ia_total:>4} calls  (Skip: {gemini_stats['image_analysis_skip']}, Pass: {gemini_stats['image_analysis_pass']}, Skip率: {ia_skip_rate:.0f}%)")
+
+        # テキスト検証
+        v_total = gemini_stats["validate_ok"] + gemini_stats["validate_ng"] + gemini_stats["validate_error"]
+        if v_total > 0:
+            v_ok_rate = gemini_stats["validate_ok"] / v_total * 100
+            print(f"  Validation:    {v_total:>4} calls  (OK: {gemini_stats['validate_ok']}, NG: {gemini_stats['validate_ng']}, Error: {gemini_stats['validate_error']}, OK率: {v_ok_rate:.0f}%)")
+
+        # 画像比較
+        ic_total = gemini_stats["image_compare_match"] + gemini_stats["image_compare_mismatch"] + gemini_stats["image_compare_error"]
+        if ic_total > 0:
+            ic_match_rate = gemini_stats["image_compare_match"] / ic_total * 100
+            print(f"  Image Compare: {ic_total:>4} calls  (Match: {gemini_stats['image_compare_match']}, Mismatch: {gemini_stats['image_compare_mismatch']}, Error: {gemini_stats['image_compare_error']}, Match率: {ic_match_rate:.0f}%)")
 
     print(f"{'='*60}")
 

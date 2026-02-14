@@ -1,15 +1,50 @@
 """Gemini API client for product name translation and weight research."""
 
+import base64
 import os
 import re
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
+
+import requests
 
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
+
+
+def _download_image_as_part(image_url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
+    """
+    画像URLをダウンロードしてGemini APIのinline_data形式に変換する.
+
+    Args:
+        image_url: 画像のURL
+        timeout: ダウンロードタイムアウト（秒）
+
+    Returns:
+        {"inline_data": {"mime_type": "image/jpeg", "data": base64_string}} 形式の辞書。
+        失敗時はNone。
+    """
+    try:
+        resp = requests.get(image_url, timeout=timeout, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        resp.raise_for_status()
+
+        # Content-Typeからmime_typeを判定
+        content_type = resp.headers.get("Content-Type", "image/jpeg")
+        if ";" in content_type:
+            content_type = content_type.split(";")[0].strip()
+        if content_type not in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
+            content_type = "image/jpeg"
+
+        image_b64 = base64.b64encode(resp.content).decode("utf-8")
+        return {"inline_data": {"mime_type": content_type, "data": image_b64}}
+    except Exception as e:
+        print(f"    [WARN] Image download failed: {e}")
+        return None
 
 
 def extract_model_numbers(title: str) -> List[str]:
@@ -240,9 +275,12 @@ class GeminiClient:
 キーワード:'''
 
         try:
+            image_part = _download_image_as_part(image_url)
+            if not image_part:
+                return None
             response = self.model.generate_content([
                 prompt,
-                {"url": image_url},
+                image_part,
             ])
             result = response.text.strip()
             _log_gemini_call("vision_search", len(prompt) // 4 + 500, len(result) // 4)
@@ -697,8 +735,7 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
 
 【商品情報】
 タイトル: {ebay_title}
-コンディション: {condition}
-画像URL: {image_url}{keyword_info}
+コンディション: {condition}{keyword_info}
 {condition_note}
 【スキップすべき商品の例】
 1. トレーディングカード（TCG/CCG）
@@ -770,18 +807,22 @@ DETAILS: [画像から読み取った詳細（1行）]
 それでは画像を分析してください:'''
 
         try:
-            # Gemini 2.0 Flash は画像URLを直接渡せる
-            response = self.model.generate_content([prompt, {"url": image_url}])
+            # 画像をダウンロードしてバイナリで送信
+            image_part = _download_image_as_part(image_url)
+            if image_part:
+                response = self.model.generate_content([prompt, image_part])
+            else:
+                # 画像ダウンロード失敗 → タイトルのみで判定
+                response = self.model.generate_content(prompt)
             result = response.text.strip()
-            _log_gemini_call("image_analysis", len(prompt) // 4 + 500, len(result) // 4)  # 画像は約500トークン相当
+            _log_gemini_call("image_analysis", len(prompt) // 4 + 500, len(result) // 4)
             return self._parse_image_analysis_result(result)
         except Exception as e:
-            # 画像取得失敗の場合はタイトルのみで判定を試みる
+            # フォールバック: タイトルのみで判定
             try:
-                fallback_prompt = prompt.replace(f"画像URL: {image_url}", "画像URL: (取得失敗、タイトルのみで判定)")
-                response = self.model.generate_content(fallback_prompt)
+                response = self.model.generate_content(prompt)
                 result = response.text.strip()
-                _log_gemini_call("image_analysis", len(fallback_prompt) // 4, len(result) // 4)
+                _log_gemini_call("image_analysis", len(prompt) // 4, len(result) // 4)
                 return self._parse_image_analysis_result(result)
             except Exception as e2:
                 print(f"  [WARN] Gemini image analysis failed: {e2}")
@@ -873,10 +914,17 @@ RESULT: [MATCH/MISMATCH/UNCERTAIN]
 REASON: [1行で理由]'''
 
         try:
+            # 両方の画像をダウンロード
+            ebay_img = _download_image_as_part(ebay_image_url)
+            source_img = _download_image_as_part(source_image_url)
+            if not ebay_img or not source_img:
+                print(f"  [Gemini画像比較] 画像ダウンロード失敗 → スキップ")
+                return None
+
             response = self.model.generate_content([
                 prompt,
-                {"url": ebay_image_url},
-                {"url": source_image_url},
+                ebay_img,
+                source_img,
             ])
             result = response.text.strip()
             _log_gemini_call("image_compare", len(prompt) // 4 + 1000, len(result) // 4)

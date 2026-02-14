@@ -200,6 +200,67 @@ class GeminiClient:
             print(f"  [WARN] Gemini translation failed: {e}")
             return None
 
+    def extract_product_keywords_from_image(
+        self,
+        image_url: str,
+        ebay_title: str,
+    ) -> Optional[str]:
+        """
+        eBay商品画像からGemini Visionで商品を特定し、楽天検索用キーワードを生成する.
+
+        Google Lens（SerpAPI有料）の代替として、Geminiで画像を解析して
+        ブランド名・型番・商品名を抽出し、楽天APIで検索可能なキーワードを返す。
+
+        Args:
+            image_url: eBay商品の画像URL
+            ebay_title: eBayの商品タイトル（参考情報）
+
+        Returns:
+            楽天検索用の日本語キーワード。失敗時はNone。
+        """
+        if not self.is_enabled or not image_url:
+            return None
+
+        prompt = f'''商品画像を見て、この商品を日本の楽天市場で検索するための日本語キーワードを生成してください。
+
+【参考】eBayタイトル: {ebay_title}
+
+【指示】
+- 画像に写っている商品のブランド名、型番、商品名を読み取る
+- パッケージや本体に印刷されている文字（型番、ロゴ）を優先する
+- eBayタイトルは参考程度。画像から読み取れる情報を優先する
+- 楽天で検索してヒットしやすい形式にする
+- 型番がある場合: 「ブランド名 型番」（例: KATO 10-1234）
+- 型番がない場合: 「ブランド名 商品名」（例: バンダイ ガンプラ RX-78）
+
+【出力形式】
+キーワードのみを1行で出力。説明や補足は不要。
+画像から商品を特定できない場合は「UNKNOWN」と出力。
+
+キーワード:'''
+
+        try:
+            response = self.model.generate_content([
+                prompt,
+                {"url": image_url},
+            ])
+            result = response.text.strip()
+            _log_gemini_call("vision_search", len(prompt) // 4 + 500, len(result) // 4)
+
+            # クリーンアップ
+            result = ' '.join(result.split())
+            # 「キーワード:」プレフィックスが残っている場合は除去
+            if result.startswith("キーワード:") or result.startswith("キーワード："):
+                result = result.split(":", 1)[-1].split("：", 1)[-1].strip()
+
+            if not result or result == "UNKNOWN" or len(result) < 2:
+                return None
+
+            return result
+        except Exception as e:
+            print(f"  [WARN] Gemini Vision search failed: {e}")
+            return None
+
     def extract_product_identifier(self, title: str) -> Optional[str]:
         """
         商品タイトルから型番や識別子を抽出する.

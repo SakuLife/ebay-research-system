@@ -2128,9 +2128,10 @@ def main():
 
     # === 実績トラッキング ===
     search_stats = {
-        "web_en": {"calls": 0, "total_results": 0, "adopted": 0},   # Web(EN)検索
-        "lens": {"calls": 0, "total_results": 0, "adopted": 0},     # Google Lens
-        "rakuten": {"calls": 0, "total_results": 0, "adopted": 0},  # 楽天API
+        "web_en": {"calls": 0, "total_results": 0, "adopted": 0},       # Web(EN)検索
+        "lens": {"calls": 0, "total_results": 0, "adopted": 0},         # Google Lens
+        "rakuten": {"calls": 0, "total_results": 0, "adopted": 0},      # 楽天API
+        "vision_rakuten": {"calls": 0, "total_results": 0, "adopted": 0},  # Gemini Vision→楽天
     }
     gemini_stats = {
         "validate_ok": 0,       # テキスト検証: accept
@@ -2143,6 +2144,8 @@ def main():
         "image_analysis_pass": 0,    # 画像分析: 通過
         "translate_ok": 0,      # 翻訳: 成功
         "translate_error": 0,   # 翻訳: 失敗
+        "vision_extract_ok": 0,    # Vision画像→キーワード: 成功
+        "vision_extract_ng": 0,    # Vision画像→キーワード: 失敗/UNKNOWN
     }
 
     # Gemini使用量をリセット
@@ -2724,6 +2727,58 @@ def main():
                     else:
                         print(f"    → 結果なし")
 
+            # === 2.8 Gemini Vision → 楽天再検索 (SerpAPI代替) ===
+            # 画像からGeminiで商品を特定し、楽天で再検索する（Lensの無料代替）
+            use_vision_search = os.getenv("GEMINI_VISION_SEARCH", "true").lower() == "true"
+            if use_vision_search and not best_source and not skip_lens_and_en and image_url:
+                vision_gemini = GeminiClient()
+                if vision_gemini.is_enabled:
+                    print(f"  [Step 2.8] Gemini Vision → 楽天再検索 (Lens代替・無料)")
+                    vision_keywords = vision_gemini.extract_product_keywords_from_image(
+                        image_url=image_url,
+                        ebay_title=ebay_title,
+                    )
+                    if vision_keywords:
+                        gemini_stats["vision_extract_ok"] += 1
+                        print(f"    Vision抽出: {vision_keywords}")
+
+                        # 既に同じクエリで楽天検索済みなら重複回避
+                        if vision_keywords != japanese_query:
+                            rakuten_client = sourcing_client.rakuten_client
+                            if rakuten_client and rakuten_client.is_enabled:
+                                vision_offers = rakuten_client.search_multiple(vision_keywords, max_results=10)
+                                search_stats["vision_rakuten"]["calls"] += 1
+                                search_stats["vision_rakuten"]["total_results"] += len(vision_offers)
+                                print(f"    楽天結果: {len(vision_offers)}件")
+
+                                if vision_offers:
+                                    vision_sources = list(vision_offers)
+
+                                    # スコアリング（最低閾値30%）
+                                    vision_top = find_top_matching_sources(
+                                        ebay_title, vision_sources, min_similarity=0.30, top_n=3,
+                                        category_name=category_name, condition=condition,
+                                        keyword=keyword, ebay_price=ebay_price
+                                    )
+                                    if vision_top:
+                                        top_sources = vision_top
+                                        best_source = top_sources[0].source
+                                        best_similarity_so_far = top_sources[0].similarity
+                                        search_method = "Vision+楽天"
+                                        skip_lens = True
+                                        skip_text_search = True
+                                        print(f"    → 選択: [{best_source.source_site}] 類似度:{best_similarity_so_far:.0%}")
+                                        print(f"    [API節約] Vision+楽天で候補あり → Lens/ENスキップ")
+                                    else:
+                                        print(f"    → 類似度閾値(30%)未満")
+                                else:
+                                    print(f"    → 楽天結果なし")
+                        else:
+                            print(f"    → 翻訳クエリと同一のためスキップ")
+                    else:
+                        gemini_stats["vision_extract_ng"] += 1
+                        print(f"    → 商品特定できず")
+
             # === 2.5 Free Web Pre-Screening (DuckDuckGo + Gemini) ===
             # 楽天で見つからなかった場合、無料Web検索で仕入れ困難性をチェック
             # → 仕入れ困難ならSerpAPI（Lens/EN）をスキップして$2節約
@@ -3211,6 +3266,8 @@ def main():
                             search_stats["web_en"]["adopted"] += 1
                         elif search_method == "画像検索":
                             search_stats["lens"]["adopted"] += 1
+                        elif search_method == "Vision+楽天":
+                            search_stats["vision_rakuten"]["adopted"] += 1
 
                         # 価格確認が必要かどうか
                         if total_source_price <= 0:
@@ -3829,7 +3886,7 @@ def main():
             adopted = stats["adopted"]
             rate = f"{adopted/calls*100:.1f}%" if calls > 0 else "-"
             avg_results = f"{results/calls:.1f}" if calls > 0 else "-"
-            label = {"web_en": "Web(EN)", "lens": "Lens", "rakuten": "Rakuten"}[method_name]
+            label = {"web_en": "Web(EN)", "lens": "Lens", "rakuten": "Rakuten", "vision_rakuten": "Vision+Rkt"}[method_name]
             print(f"  {label:<12} {calls:>6} {results:>8} {adopted:>8} {rate:>8}")
         print(f"  {'-'*12} {'-'*6} {'-'*8} {'-'*8} {'-'*8}")
         print(f"  {'Total':<12} {total_search_calls:>6} {'-':>8} {total_adopted:>8} {total_adopted/total_search_calls*100:.1f}%" if total_search_calls > 0 else "")
@@ -3840,6 +3897,7 @@ def main():
         + gemini_stats["translate_ok"] + gemini_stats["translate_error"]
         + gemini_stats["image_compare_match"] + gemini_stats["image_compare_mismatch"] + gemini_stats["image_compare_error"]
         + gemini_stats["image_analysis_skip"] + gemini_stats["image_analysis_pass"]
+        + gemini_stats["vision_extract_ok"] + gemini_stats["vision_extract_ng"]
     )
     if total_gemini_ops > 0:
         print(f"\n--- Gemini Performance ---")
@@ -3861,6 +3919,12 @@ def main():
         if v_total > 0:
             v_ok_rate = gemini_stats["validate_ok"] / v_total * 100
             print(f"  Validation:    {v_total:>4} calls  (OK: {gemini_stats['validate_ok']}, NG: {gemini_stats['validate_ng']}, Error: {gemini_stats['validate_error']}, OK率: {v_ok_rate:.0f}%)")
+
+        # Vision画像→キーワード抽出
+        ve_total = gemini_stats["vision_extract_ok"] + gemini_stats["vision_extract_ng"]
+        if ve_total > 0:
+            ve_rate = gemini_stats["vision_extract_ok"] / ve_total * 100
+            print(f"  Vision Extract:{ve_total:>4} calls  (OK: {gemini_stats['vision_extract_ok']}, NG: {gemini_stats['vision_extract_ng']}, Rate: {ve_rate:.0f}%)")
 
         # 画像比較
         ic_total = gemini_stats["image_compare_match"] + gemini_stats["image_compare_mismatch"] + gemini_stats["image_compare_error"]

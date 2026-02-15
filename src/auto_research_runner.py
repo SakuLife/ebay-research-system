@@ -26,6 +26,67 @@ from .serpapi_client import SerpApiClient, ShoppingItem, clean_query_for_shoppin
 from .gemini_client import GeminiClient, reset_gemini_usage, get_gemini_usage_summary
 from .price_scraper import scrape_price_for_url, scrape_price_with_fallback
 
+import io
+import requests as _requests
+from PIL import Image as _PILImage
+
+
+def compute_image_dhash(image_url: str, hash_size: int = 12, timeout: int = 8) -> Optional[str]:
+    """
+    画像URLからdifference hash (dhash) を計算する.
+
+    dhashは画像の視覚的な指紋。同じ商品の同じ写真なら
+    URLが違っても同じハッシュになる。APIコストゼロ。
+
+    Args:
+        image_url: 画像のURL
+        hash_size: ハッシュサイズ（大きいほど厳密）
+        timeout: ダウンロードタイムアウト（秒）
+
+    Returns:
+        16進数文字列のハッシュ。失敗時はNone。
+    """
+    try:
+        resp = _requests.get(image_url, timeout=timeout, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        resp.raise_for_status()
+        img = _PILImage.open(io.BytesIO(resp.content))
+
+        # グレースケール化 → hash_size+1 x hash_size にリサイズ
+        img = img.convert("L").resize((hash_size + 1, hash_size))
+        pixels = list(img.getdata())
+
+        # 隣接ピクセルの差分でビット列を生成
+        bits = []
+        for row in range(hash_size):
+            for col in range(hash_size):
+                idx = row * (hash_size + 1) + col
+                bits.append(1 if pixels[idx] < pixels[idx + 1] else 0)
+
+        # ビット列を16進数に変換
+        hash_int = 0
+        for bit in bits:
+            hash_int = (hash_int << 1) | bit
+        return format(hash_int, f'0{hash_size * hash_size // 4}x')
+    except Exception:
+        return None
+
+
+def dhash_distance(hash1: str, hash2: str) -> int:
+    """
+    2つのdhashのハミング距離を計算する.
+
+    距離0 = 完全一致、距離が小さいほど類似。
+    一般的に距離10以下なら同じ/非常に類似した画像。
+    """
+    if not hash1 or not hash2 or len(hash1) != len(hash2):
+        return 999
+    n1 = int(hash1, 16)
+    n2 = int(hash2, 16)
+    xor = n1 ^ n2
+    return bin(xor).count('1')
+
 
 # 日本時間 (UTC+9)
 JST = timezone(timedelta(hours=9))
@@ -2276,6 +2337,8 @@ def main():
     # 同じeBay商品が別タイトル/別価格で出品されている場合に、仕入先検索を再利用する
     global_processed_titles: List[tuple] = []  # [(title, cache_key), ...]
     sourcing_cache: Dict[str, dict] = {}  # cache_key → {top_sources, search_method, original_title}
+    # 画像ハッシュベース重複検出（タイトルが違っても同じ商品画像ならキャッシュヒット）
+    image_hash_cache: Dict[str, str] = {}  # dhash → cache_key (sourcing_cacheのキー)
 
     for raw_keyword in keywords:
         # タイムアウトチェック（キーワードループ先頭）
@@ -2597,6 +2660,39 @@ def main():
 
             # 画像URLも取得
             image_url = getattr(item, 'image_url', '') or ''
+            item_dhash = None  # 画像ハッシュ（重複検出用）
+
+            # === 画像ハッシュベースの重複検出 ===
+            image_skip = False
+            if not cache_hit and image_url:
+                item_dhash = compute_image_dhash(image_url)
+                if item_dhash and image_hash_cache:
+                    for cached_hash, cached_key in image_hash_cache.items():
+                        dist = dhash_distance(item_dhash, cached_hash)
+                        if dist <= 10:
+                            if cached_key in sourcing_cache:
+                                cached = sourcing_cache[cached_key]
+                                print(f"\n  [IMAGE CACHE HIT] 同一画像の仕入先を再利用 (dhash距離: {dist})")
+                                print(f"    Current: {ebay_title[:60]}...")
+                                print(f"    Cached:  {cached['original_title'][:60]}...")
+                                print(f"    Method:  {cached['search_method']}")
+                                top_sources = cached["top_sources"]
+                                search_method = cached["search_method"] + "(img-cache)"
+                                best_source = top_sources[0].source if top_sources else None
+                                cache_hit = True
+                            else:
+                                print(f"\n  [SKIP] Duplicate image (dhash distance: {dist})")
+                                print(f"         Current: {ebay_title[:60]}...")
+                                skip_reasons["other"] += 1
+                                skipped_this_keyword += 1
+                                image_skip = True
+                            break
+
+            if image_skip:
+                # 仕入先なし画像重複 → タイトルだけ記録してスキップ
+                if ebay_title:
+                    global_processed_titles.append((ebay_title, ebay_title.lower().strip()))
+                continue
 
             # === Gemini画像分析: カード/セット/一番くじ等を早期検出 ===
             # カテゴリスキップされなかった場合でも、画像から判定可能
@@ -3752,7 +3848,10 @@ def main():
                 skipped_this_keyword += 1
                 # キーワード横断: 仕入先なしを記録（同じ商品の再検索を防止）
                 if ebay_title and not cache_hit:
-                    global_processed_titles.append((ebay_title, ebay_title.lower().strip()))
+                    no_source_key = ebay_title.lower().strip()
+                    global_processed_titles.append((ebay_title, no_source_key))
+                    if item_dhash:
+                        image_hash_cache[item_dhash] = no_source_key
                 continue
 
             result_data = {
@@ -3785,6 +3884,9 @@ def main():
                         "original_title": ebay_title,
                     }
                 global_processed_titles.append((ebay_title, cache_key))
+                # 画像ハッシュも登録（同一画像の別出品を検出するため）
+                if item_dhash and not cache_hit:
+                    image_hash_cache[item_dhash] = cache_key
 
             # 書き込んだeBay Item IDを処理済みに追加（最安値検索で同一リスティングへの重複書き込みを防止）
             written_item_id = re.search(r'/itm/(\d+)', ebay_url)

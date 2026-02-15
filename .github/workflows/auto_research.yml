@@ -18,6 +18,18 @@ jobs:
         run: |
           pip3 install -r requirements.txt
 
+      - name: Wait for apt lock release
+        run: |
+          for i in $(seq 1 30); do
+            if ! flock -n /var/lib/apt/lists/lock true 2>/dev/null; then
+              echo "apt lock held, waiting... ($i/30)"
+              sleep 10
+            else
+              echo "apt lock free"
+              break
+            fi
+          done
+
       - name: Install Playwright browsers (if needed)
         run: |
           python3 -m playwright install --with-deps chromium

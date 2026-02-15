@@ -2272,6 +2272,11 @@ def main():
     keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
     processed_source_urls: set[str] = set()  # 仕入先URL重複チェック用
 
+    # === キーワード横断: 仕入先キャッシュ & 重複検出 ===
+    # 同じeBay商品が別タイトル/別価格で出品されている場合に、仕入先検索を再利用する
+    global_processed_titles: List[tuple] = []  # [(title, cache_key), ...]
+    sourcing_cache: Dict[str, dict] = {}  # cache_key → {top_sources, search_method, original_title}
+
     for raw_keyword in keywords:
         # タイムアウトチェック（キーワードループ先頭）
         elapsed = time.time() - pipeline_start_time
@@ -2503,8 +2508,43 @@ def main():
                     skipped_this_keyword += 1
                     continue
 
-            # 同一キーワード内でのタイトル重複チェック（出品者違いの同一商品を排除）
-            if ebay_title and output_ebay_titles:
+            # キーワード横断の重複チェック + 仕入先キャッシュ再利用
+            cache_hit = False
+            if ebay_title and global_processed_titles:
+                title_lower = ebay_title.lower().strip()
+                for prev_title, cache_key in global_processed_titles:
+                    sim = SequenceMatcher(None, title_lower, prev_title.lower().strip()).ratio()
+                    if sim >= 0.85:
+                        if cache_key in sourcing_cache:
+                            # 仕入先キャッシュあり → 検索スキップして結果を再利用
+                            cached = sourcing_cache[cache_key]
+                            print(f"\n  [CACHE HIT] 類似商品の仕入先を再利用 (類似度: {sim:.0%})")
+                            print(f"    Current: {ebay_title[:60]}...")
+                            print(f"    Cached:  {prev_title[:60]}...")
+                            print(f"    Method:  {cached['search_method']}")
+                            # キャッシュから復元してそのまま利益計算・書き込みへ進む
+                            top_sources = cached["top_sources"]
+                            search_method = cached["search_method"] + "(cache)"
+                            best_source = top_sources[0].source if top_sources else None
+                            cache_hit = True
+                        else:
+                            # 仕入先なしで処理済み → 重複スキップ
+                            print(f"\n  [SKIP] Duplicate eBay listing (similarity: {sim:.0%})")
+                            print(f"         Current: {ebay_title[:60]}...")
+                            print(f"         Prev:    {prev_title[:60]}...")
+                            skip_reasons["other"] += 1
+                            skipped_this_keyword += 1
+                        break
+
+                # 仕入先なし重複の場合はcontinue
+                if not cache_hit and any(
+                    SequenceMatcher(None, ebay_title.lower().strip(), pt.lower().strip()).ratio() >= 0.85
+                    for pt, _ in global_processed_titles
+                ):
+                    continue
+
+            # 同一キーワード内でのタイトル重複チェック（キーワード横断で検出されなかった場合）
+            if not cache_hit and ebay_title and output_ebay_titles:
                 title_lower = ebay_title.lower().strip()
                 is_dup = False
                 for prev_title in output_ebay_titles:
@@ -2561,7 +2601,7 @@ def main():
             # === Gemini画像分析: カード/セット/一番くじ等を早期検出 ===
             # カテゴリスキップされなかった場合でも、画像から判定可能
             # New/Used両方で実行（SerpAPI節約のため早期フィルタリング）
-            if image_url:
+            if not cache_hit and image_url:
                 gemini_analyzer = GeminiClient()
                 if gemini_analyzer.is_enabled:
                     image_analysis = gemini_analyzer.analyze_ebay_item_image(
@@ -2595,15 +2635,18 @@ def main():
             # 3. 英語でWeb検索（日本向け）
             # ※日本語Web検索は成功率2%のため削除（英語の方が11%で高い）
 
-            print(f"\n[4/5] Searching domestic sources...")
+            # cache_hit時: best_source/top_sources/search_method は既にセット済み
+            if not cache_hit:
+                best_source = None
+                top_sources: List[RankedSource] = []
+                search_method = ""
+
+            print(f"\n[4/5] {'Using cached results (search skipped)' if cache_hit else 'Searching domestic sources...'}")
 
             all_sources = []
-            best_source = None
-            top_sources: List[RankedSource] = []  # トップ3の仕入先
-            search_method = ""
-            skip_text_search = False  # Lens成功時に後続検索をスキップ
-            skip_lens_and_en = False  # アパレル検出時にLens/EN検索をスキップ
-            best_similarity_so_far = 0.0  # 最良の類似度を記録
+            skip_text_search = cache_hit  # cache_hit時は全検索スキップ
+            skip_lens_and_en = cache_hit
+            best_similarity_so_far = top_sources[0].similarity if cache_hit and top_sources else 0.0
 
             # === SerpAPI節約: 成功率の低いカテゴリをスキップ ===
             # 以下のカテゴリはLens/EN検索の成功率が極めて低いため、楽天APIのみで判断
@@ -2640,7 +2683,7 @@ def main():
 
             # === 1. Gemini翻訳（楽天API用に先に実行）===
             japanese_query = None
-            if ebay_title:
+            if not cache_hit and ebay_title:
                 cleaned_title = clean_query_for_shopping(ebay_title)
                 gemini_client = GeminiClient()
                 if gemini_client.is_enabled and cleaned_title:
@@ -3063,9 +3106,10 @@ def main():
                     print(f"    → 有効な仕入先なし")
 
             # 結果判定
-            error_reason = None
+            if not cache_hit:
+                error_reason = None
 
-            if not top_sources:
+            if not cache_hit and not top_sources:
                 if not all_sources:
                     print(f"  [WARN] No domestic sources found")
                     error_reason = "国内仕入先なし"
@@ -3076,21 +3120,33 @@ def main():
                     error_reason = "類似商品なし"
 
             # トップ3の仕入先を処理（数量チェック + 価格スクレイピング）
-            total_source_price = 0
-            similarity = 0.0
-            needs_price_check = False  # 大手ECで価格なしの場合
+            if cache_hit:
+                # cache_hitでは以下の変数を事前セット
+                total_source_price = best_source.source_price_jpy + best_source.source_shipping_jpy if best_source else 0
+                similarity = top_sources[0].similarity if top_sources else 0.0
+                needs_price_check = False
+                price_note = ""
+                error_reason = "" if best_source else "類似商品なし"
+            else:
+                total_source_price = 0
+                similarity = 0.0
+                needs_price_check = False  # 大手ECで価格なしの場合
             working_candidates = []  # Gemini検証用に保持
 
-            # eBayタイトルから数量を抽出
-            ebay_quantity = extract_quantity_from_title(ebay_title, is_japanese=False)
-            if ebay_quantity.is_set:
+            # eBayタイトルから数量を抽出（cache_hit時もスキップ）
+            if cache_hit:
+                ebay_quantity = None
+            else:
+                ebay_quantity = extract_quantity_from_title(ebay_title, is_japanese=False)
+            if ebay_quantity and ebay_quantity.is_set:
                 qty_str = f"{ebay_quantity.quantity}個" if ebay_quantity.quantity > 0 else "数量不明"
                 print(f"\n  [数量チェック] eBay: セット商品 ({qty_str}, パターン: {ebay_quantity.pattern_matched})")
-            else:
+            elif ebay_quantity:
                 print(f"\n  [数量チェック] eBay: 単品")
 
             # 全ての候補に対して数量チェック + 価格スクレイピング
-            if top_sources:
+            # cache_hit時は既に処理済みのためスキップ
+            if top_sources and not cache_hit:
                 print(f"\n  [INFO] Processing top {len(top_sources)} sources (数量チェック込み)...")
                 candidates_with_qty = []
 
@@ -3301,7 +3357,8 @@ def main():
                 error_reason = "価格取得ミス"
 
             # === Gemini検証: 仕入先が適切かチェック ===
-            if best_source and not error_reason:
+            # cache_hit時は既に検証済みのためスキップ
+            if best_source and not error_reason and not cache_hit:
                 gemini_validator = GeminiClient()
                 if gemini_validator.is_enabled:
                     print(f"\n  [Gemini検証] 仕入先チェック中...")
@@ -3457,7 +3514,8 @@ def main():
             # === 在庫確認: 非大手ECサイトの場合のみ ===
             # Amazon/楽天/Yahooはスクレイピング時に在庫確認済み
             # その他サイトは検索結果の価格を信用しているので、ここで確認
-            if best_source and not error_reason:
+            # cache_hit時は既に確認済みのためスキップ
+            if best_source and not error_reason and not cache_hit:
                 source_url_lower = best_source.source_url.lower()
                 is_major_ec = any(domain in source_url_lower for domain in [
                     "amazon.co.jp", "rakuten.co.jp", "shopping.yahoo.co.jp"
@@ -3692,6 +3750,9 @@ def main():
                 else:
                     skip_reasons["no_source"] += 1
                 skipped_this_keyword += 1
+                # キーワード横断: 仕入先なしを記録（同じ商品の再検索を防止）
+                if ebay_title and not cache_hit:
+                    global_processed_titles.append((ebay_title, ebay_title.lower().strip()))
                 continue
 
             result_data = {
@@ -3715,6 +3776,15 @@ def main():
             items_output_this_keyword += 1  # このキーワードで処理した件数
             if ebay_title:
                 output_ebay_titles.append(ebay_title)  # 重複検出用に記録
+                # キーワード横断キャッシュに登録
+                cache_key = ebay_title.lower().strip()
+                if top_sources and not cache_hit:
+                    sourcing_cache[cache_key] = {
+                        "top_sources": top_sources,
+                        "search_method": search_method,
+                        "original_title": ebay_title,
+                    }
+                global_processed_titles.append((ebay_title, cache_key))
 
             # 書き込んだeBay Item IDを処理済みに追加（最安値検索で同一リスティングへの重複書き込みを防止）
             written_item_id = re.search(r'/itm/(\d+)', ebay_url)
@@ -3890,6 +3960,11 @@ def main():
             print(f"  {label:<12} {calls:>6} {results:>8} {adopted:>8} {rate:>8}")
         print(f"  {'-'*12} {'-'*6} {'-'*8} {'-'*8} {'-'*8}")
         print(f"  {'Total':<12} {total_search_calls:>6} {'-':>8} {total_adopted:>8} {total_adopted/total_search_calls*100:.1f}%" if total_search_calls > 0 else "")
+
+    # キャッシュ統計
+    cache_hits = len([1 for pt, ck in global_processed_titles if ck in sourcing_cache]) - len(sourcing_cache)
+    if len(sourcing_cache) > 0:
+        print(f"\n  Sourcing Cache: {len(sourcing_cache)} entries cached, {len(global_processed_titles)} titles tracked")
 
     # === Gemini実績サマリー ===
     total_gemini_ops = (

@@ -61,14 +61,15 @@ jobs:
           # Mock settings
           USE_MOCKS: ${{ secrets.USE_MOCKS }}
         run: |
-          python3 -m src.auto_research_runner
+          mkdir -p logs
+          LOG_FILE="logs/$(date +'%Y-%m-%d_%H%M').txt"
+          echo "Log file: $LOG_FILE"
+          python3 -m src.auto_research_runner 2>&1 | tee "$LOG_FILE"
 
-      - name: Upload logs on failure
-        if: failure()
+      - name: Upload pipeline logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: error-logs
-          path: |
-            *.log
-            error_*.txt
-          retention-days: 7
+          name: pipeline-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 14

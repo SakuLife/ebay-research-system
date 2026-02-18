@@ -1550,7 +1550,7 @@ class RankedSource:
 def find_top_matching_sources(
     ebay_title: str,
     sources: List[SourceOffer],
-    min_similarity: float = 0.3,
+    min_similarity: float = 0.4,
     prefer_sourcing: bool = True,
     require_price: bool = True,
     top_n: int = 3,
@@ -1572,7 +1572,7 @@ def find_top_matching_sources(
     Args:
         ebay_title: eBayの商品タイトル
         sources: 仕入先候補リスト
-        min_similarity: 最低類似度（デフォルト0.3、価格ありは0.55で判定）
+        min_similarity: 最低類似度（デフォルト0.4、価格なしは0.55で判定）
         prefer_sourcing: 仕入れ可能サイトを優先するか
         require_price: 価格が必須かどうか（Trueなら価格0円は除外）
         top_n: 返す件数（デフォルト3）
@@ -1764,7 +1764,7 @@ def find_top_matching_sources(
 def find_best_matching_source(
     ebay_title: str,
     sources: List[SourceOffer],
-    min_similarity: float = 0.3,
+    min_similarity: float = 0.4,
     prefer_sourcing: bool = True,
     require_price: bool = True
 ) -> Optional[SourceOffer]:
@@ -2577,7 +2577,7 @@ def main():
                 title_lower = ebay_title.lower().strip()
                 for prev_title, cache_key in global_processed_titles:
                     sim = SequenceMatcher(None, title_lower, prev_title.lower().strip()).ratio()
-                    if sim >= 0.85:
+                    if sim >= 0.75:
                         if cache_key in sourcing_cache:
                             # 仕入先キャッシュあり → 検索スキップして結果を再利用
                             cached = sourcing_cache[cache_key]
@@ -2612,7 +2612,7 @@ def main():
                 is_dup = False
                 for prev_title in output_ebay_titles:
                     sim = SequenceMatcher(None, title_lower, prev_title.lower().strip()).ratio()
-                    if sim >= 0.85:
+                    if sim >= 0.75:
                         print(f"\n  [SKIP] Duplicate eBay listing (similarity: {sim:.0%})")
                         print(f"         Current: {ebay_title[:60]}...")
                         print(f"         Prev:    {prev_title[:60]}...")
@@ -2669,7 +2669,7 @@ def main():
                 if item_dhash and image_hash_cache:
                     for cached_hash, cached_key in image_hash_cache.items():
                         dist = dhash_distance(item_dhash, cached_hash)
-                        if dist <= 10:
+                        if dist <= 15:
                             if cached_key in sourcing_cache:
                                 cached = sourcing_cache[cached_key]
                                 print(f"\n  [IMAGE CACHE HIT] 同一画像の仕入先を再利用 (dhash距離: {dist})")
@@ -2843,7 +2843,7 @@ def main():
                                 print(f"       {src.title[:50]}...")
 
                             rakuten_top = find_top_matching_sources(
-                                ebay_title, rakuten_sources, min_similarity=0.30, top_n=3,
+                                ebay_title, rakuten_sources, min_similarity=0.40, top_n=3,
                                 category_name=category_name, condition=condition,
                                 keyword=keyword, ebay_price=ebay_price
                             )
@@ -2893,9 +2893,9 @@ def main():
                                 if vision_offers:
                                     vision_sources = list(vision_offers)
 
-                                    # スコアリング（最低閾値30%）
+                                    # スコアリング（最低閾値40%）
                                     vision_top = find_top_matching_sources(
-                                        ebay_title, vision_sources, min_similarity=0.30, top_n=3,
+                                        ebay_title, vision_sources, min_similarity=0.40, top_n=3,
                                         category_name=category_name, condition=condition,
                                         keyword=keyword, ebay_price=ebay_price
                                     )
@@ -3030,7 +3030,7 @@ def main():
                         print(f"       {src.title[:50]}...")
 
                     top_sources = find_top_matching_sources(
-                        ebay_title, all_sources, min_similarity=0.3, top_n=3,
+                        ebay_title, all_sources, min_similarity=0.4, top_n=3,
                         category_name=category_name, condition=condition,
                         keyword=keyword, ebay_price=ebay_price
                     )

@@ -84,4 +84,4 @@ jobs:
         with:
           name: pipeline-logs-${{ github.run_id }}
           path: logs/
-          retention-days: 14
+          retention-days: 3

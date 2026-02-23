@@ -1830,8 +1830,8 @@ def count_excluded_by_keyword(
     """
     try:
         worksheet = sheets_client.spreadsheet.worksheet("入力シート")
-        # B列(キーワード)=col0, E列(新品中古)=col3, V列(ステータス)=col20 in B:V range
-        all_data = worksheet.get("B2:V1000")
+        # B列(キーワード)=col0, E列(新品中古)=col3, W列(ステータス)=col21 in B:W range
+        all_data = worksheet.get("B2:W1000")
 
         excluded_counts: dict[str, int] = {}
         for row in all_data:
@@ -1839,7 +1839,7 @@ def count_excluded_by_keyword(
                 continue
             keyword = row[0].strip()
             condition = row[3].strip() if len(row) > 3 and row[3] else "New"
-            status = row[20].strip() if len(row) > 20 and row[20] else ""
+            status = row[21].strip() if len(row) > 21 and row[21] else ""
 
             if status == "除外":
                 base_kw = _find_base_keyword(keyword, main_keywords)
@@ -2022,13 +2022,13 @@ def update_sheet_headers(sheet_client) -> bool:
 def get_next_empty_row(sheet_client) -> int:
     """Get the next empty row number in the input sheet.
 
-    V列（ステータス）を前方検索し、最初の空行を返す。
-    V列はデータ行("要確認")・通知行("完了")の両方で値があるため、
+    W列（ステータス）を前方検索し、最初の空行を返す。
+    W列はデータ行("要確認")・通知行("完了")の両方で値があるため、
     テーブル内の本当の空行を正確に検出できる。
     """
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
-    # V列 = 22番目(1-indexed)。データ行・通知行の両方で値がある列
-    col_v_values = worksheet.col_values(22)
+    # W列 = 23番目(1-indexed)。データ行・通知行の両方で値がある列
+    col_v_values = worksheet.col_values(23)
     # ヘッダー(index 0)はスキップし、最初の空セルを探す
     for i in range(1, len(col_v_values)):
         if not col_v_values[i] or not col_v_values[i].strip():
@@ -2038,20 +2038,20 @@ def get_next_empty_row(sheet_client) -> int:
 
 
 def _apply_row_validation(worksheet, row_number: int) -> None:
-    """挿入行にV列プルダウンとW列プルダウンを設定する."""
+    """挿入行にW列プルダウンとX列プルダウンを設定する."""
     try:
         sheet_id = worksheet.id
         worksheet.spreadsheet.batch_update({
             "requests": [
-                # V列: ステータスプルダウン
+                # W列: ステータスプルダウン
                 {
                     "setDataValidation": {
                         "range": {
                             "sheetId": sheet_id,
                             "startRowIndex": row_number - 1,
                             "endRowIndex": row_number,
-                            "startColumnIndex": 21,  # V列 (0-indexed)
-                            "endColumnIndex": 22,
+                            "startColumnIndex": 22,  # W列 (0-indexed)
+                            "endColumnIndex": 23,
                         },
                         "rule": {
                             "condition": {
@@ -2066,15 +2066,15 @@ def _apply_row_validation(worksheet, row_number: int) -> None:
                         },
                     }
                 },
-                # W列: 出品フラグプルダウン
+                # X列: 出品フラグプルダウン
                 {
                     "setDataValidation": {
                         "range": {
                             "sheetId": sheet_id,
                             "startRowIndex": row_number - 1,
                             "endRowIndex": row_number,
-                            "startColumnIndex": 22,  # W列 (0-indexed)
-                            "endColumnIndex": 23,
+                            "startColumnIndex": 23,  # X列 (0-indexed)
+                            "endColumnIndex": 24,
                         },
                         "rule": {
                             "condition": {
@@ -2100,7 +2100,7 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
 
     # Prepare row data matching INPUT_SHEET_COLUMNS
-    row_data = [""] * 24  # A〜X列：24列固定
+    row_data = [""] * 25  # A〜Y列：25列固定
 
     # Map data to columns (24 columns: A-X)
     row_data[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付（日本時間）
@@ -2125,11 +2125,14 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
 
     # eBay情報
     row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
+    # P: 販売数（eBay販売実績数）
+    sold_count = data.get("sold_count", "")
+    row_data[15] = str(int(sold_count)) if sold_count not in ("", None, 0) else ""
     # 販売価格・送料は小数第1位までにフォーマット（0も有効な値として扱う）
     ebay_price = data.get("ebay_price")
     ebay_shipping = data.get("ebay_shipping")
-    row_data[15] = f"{float(ebay_price):.1f}" if ebay_price is not None and ebay_price != "" else ""  # P: 販売価格
-    row_data[16] = f"{float(ebay_shipping):.1f}" if ebay_shipping is not None and ebay_shipping != "" else ""  # Q: 送料
+    row_data[16] = f"{float(ebay_price):.1f}" if ebay_price is not None and ebay_price != "" else ""  # Q: 販売価格
+    row_data[17] = f"{float(ebay_shipping):.1f}" if ebay_shipping is not None and ebay_shipping != "" else ""  # R: 送料
 
     # 利益計算結果（円・%は整数で出力）
     profit_no_rebate = data.get("profit_no_rebate", "")
@@ -2137,19 +2140,19 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     profit_with_rebate = data.get("profit_with_rebate", "")
     profit_margin_with_rebate = data.get("profit_margin_with_rebate", "")
 
-    row_data[17] = str(int(profit_no_rebate)) if profit_no_rebate not in ("", None) else ""  # R: 還付抜き利益額（円）
-    row_data[18] = str(int(profit_margin_no_rebate)) if profit_margin_no_rebate not in ("", None) else ""  # S: 利益率%（還付抜き）
-    row_data[19] = str(int(profit_with_rebate)) if profit_with_rebate not in ("", None) else ""  # T: 還付あり利益額（円）
-    row_data[20] = str(int(profit_margin_with_rebate)) if profit_margin_with_rebate not in ("", None) else ""  # U: 利益率%（還付あり）
+    row_data[18] = str(int(profit_no_rebate)) if profit_no_rebate not in ("", None) else ""  # S: 還付抜き利益額（円）
+    row_data[19] = str(int(profit_margin_no_rebate)) if profit_margin_no_rebate not in ("", None) else ""  # T: 利益率%（還付抜き）
+    row_data[20] = str(int(profit_with_rebate)) if profit_with_rebate not in ("", None) else ""  # U: 還付あり利益額（円）
+    row_data[21] = str(int(profit_margin_with_rebate)) if profit_margin_with_rebate not in ("", None) else ""  # V: 利益率%（還付あり）
 
     # ステータスとメモ（出品フラグは空）
     if data.get("error"):
-        row_data[21] = "エラー"  # V: ステータス
-        row_data[23] = f"ERROR: {data.get('error')}"  # X: メモ
+        row_data[22] = "エラー"  # W: ステータス
+        row_data[24] = f"ERROR: {data.get('error')}"  # Y: メモ
     else:
-        row_data[21] = "要確認"  # V: ステータス
-        row_data[23] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # X: メモ（日本時間）
-    # W: 出品フラグは空（ユーザーが手動で入力）
+        row_data[22] = "要確認"  # W: ステータス
+        row_data[24] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # Y: メモ（日本時間）
+    # X: 出品フラグは空（ユーザーが手動で入力）
 
     # insert_rowsで行を物理挿入 → テーブルが構造的に拡張される
     # （values.update/appendではテーブル自動拡張がトリガーされない）
@@ -2388,7 +2391,7 @@ def main():
             # 出力目標数を達成するため、余裕を持って検索（処理済みスキップ分を考慮）
             # スキップが多いため、目標の10倍まで取得可能に
             search_buffer = min(items_per_keyword * 10, 60)
-            serpapi_results = serpapi_client.search_sold_items(
+            serpapi_results, ebay_sold_total = serpapi_client.search_sold_items(
                 keyword,
                 market=market,
                 min_price=min_price_local,
@@ -2397,6 +2400,11 @@ def main():
                 condition=ebay_condition
             )
             log_serpapi_call("eBay Sold", keyword, len(serpapi_results))
+
+            # min_soldフィルタ: 販売実績がmin_sold未満ならキーワードごとスキップ
+            if min_sold > 0 and ebay_sold_total < min_sold:
+                print(f"  [SKIP] eBay販売実績 {ebay_sold_total}件 < min_sold {min_sold} → キーワードスキップ")
+                serpapi_results = []  # sold_items構築をスキップ
 
             # Convert SerpApi results to ListingCandidate format
             for sold_item in serpapi_results:
@@ -2411,7 +2419,7 @@ def main():
                     ebay_item_url=sold_item.link,
                     ebay_price=price_usd,
                     ebay_shipping=0.0,  # SerpApi doesn't provide shipping cost separately
-                    sold_signal=1,  # It's a sold item
+                    sold_signal=ebay_sold_total,  # SerpApiの総販売実績数
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
@@ -2435,7 +2443,7 @@ def main():
 
             # 入力シートに通知行を書き込み
             worksheet = sheets_client.spreadsheet.worksheet("入力シート")
-            notify_row = [""] * 24
+            notify_row = [""] * 25
             notify_row[0] = now_jst().strftime("%Y-%m-%d")
             notify_row[1] = raw_keyword
             notify_row[4] = condition
@@ -2446,7 +2454,7 @@ def main():
             worksheet.insert_rows([notify_row], row=row_number, value_input_option="USER_ENTERED")
             _apply_row_validation(worksheet, row_number)
             try:
-                worksheet.format(f"A{row_number}:X{row_number}", {
+                worksheet.format(f"A{row_number}:Y{row_number}", {
                     "backgroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
                     "textFormat": {
                         "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
@@ -2498,7 +2506,7 @@ def main():
                     and serpapi_client.is_enabled):
                 page2_fetched = True
                 print(f"\n  [PAGE 2] 目標未達 ({items_output_this_keyword}/{items_per_keyword}), 残り{items_remaining}件 → 2ページ目取得")
-                page2_results = serpapi_client.search_sold_items(
+                page2_results, _ = serpapi_client.search_sold_items(
                     keyword, market=market, min_price=min_price_local,
                     max_results=search_buffer, item_location=item_location,
                     condition=ebay_condition, page=2
@@ -2516,7 +2524,7 @@ def main():
                             ebay_item_url=sold_item.link,
                             ebay_price=price_usd,
                             ebay_shipping=0.0,
-                            sold_signal=1,
+                            sold_signal=ebay_sold_total,  # 1ページ目の総販売実績数を引き継ぐ
                             ebay_title=sold_item.title,
                             currency=sold_item.currency,
                             image_url=sold_item.thumbnail,
@@ -3867,6 +3875,7 @@ def main():
                 "category_name": category_name,
                 "category_id": category_id,
                 "condition": condition,  # 新品中古（New/Used）
+                "sold_count": getattr(item, 'sold_signal', 0),  # eBay販売実績数
                 "error": error_reason  # エラー理由（None or 文字列）
             }
 
@@ -3919,7 +3928,7 @@ def main():
 
             # 通知行をテーブル内に追加
             worksheet = sheets_client.spreadsheet.worksheet("入力シート")
-            notify_row = [""] * 24  # A〜X列：24列固定
+            notify_row = [""] * 25  # A〜Y列：25列固定
             notify_row[0] = now_jst().strftime("%Y-%m-%d")  # A: 日付
             notify_row[1] = raw_keyword  # B: キーワード
             notify_row[5] = notify_text  # F: 国内最安①商品名（視認性向上）
@@ -3934,7 +3943,7 @@ def main():
             # 黒背景・白文字・折り返しなしのフォーマットを適用
             # 注意: 色はfloat(0.0〜1.0)で指定する必要がある
             try:
-                worksheet.format(f"A{row_number}:X{row_number}", {
+                worksheet.format(f"A{row_number}:Y{row_number}", {
                     "backgroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0},
                     "textFormat": {
                         "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},

@@ -59,8 +59,8 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
     except Exception:
         pass  # Row doesn't exist yet, which is fine
 
-    # Prepare row data (A〜X列：24列固定)
-    row_data = [""] * 24
+    # Prepare row data (A〜Y列：25列固定)
+    row_data = [""] * 25
 
     # Map data to columns
     row_data[0] = datetime.now().strftime("%Y-%m-%d")  # A: 日付
@@ -81,29 +81,30 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
         row_data[url_col] = result.get("url", "")
         row_data[price_col] = str(result.get("price", "")) if result.get("price") else ""
 
-    # eBay情報 (O-Q列)
+    # eBay情報 (O-R列)
     row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
-    row_data[15] = str(data.get("ebay_price", ""))  # P: 販売価格（米ドル）
-    row_data[16] = str(data.get("ebay_shipping", ""))  # Q: 販売送料（米ドル）
+    row_data[15] = str(data.get("sold_count", ""))  # P: 販売数
+    row_data[16] = str(data.get("ebay_price", ""))  # Q: 販売価格（米ドル）
+    row_data[17] = str(data.get("ebay_shipping", ""))  # R: 販売送料（米ドル）
 
-    # 利益計算結果 (R-U列)
-    row_data[17] = str(data.get("profit_no_rebate", ""))  # R: 還付抜き利益額（円）
-    row_data[18] = str(data.get("profit_margin_no_rebate", ""))  # S: 利益率%（還付抜き）
-    row_data[19] = str(data.get("profit_with_rebate", ""))  # T: 還付あり利益額（円）
-    row_data[20] = str(data.get("profit_margin_with_rebate", ""))  # U: 利益率%（還付あり）
+    # 利益計算結果 (S-V列)
+    row_data[18] = str(data.get("profit_no_rebate", ""))  # S: 還付抜き利益額（円）
+    row_data[19] = str(data.get("profit_margin_no_rebate", ""))  # T: 利益率%（還付抜き）
+    row_data[20] = str(data.get("profit_with_rebate", ""))  # U: 還付あり利益額（円）
+    row_data[21] = str(data.get("profit_margin_with_rebate", ""))  # V: 利益率%（還付あり）
 
-    # ステータスとメモ (V, W, X列)
+    # ステータスとメモ (W, X, Y列)
     if data.get("error"):
-        row_data[21] = "エラー"  # V: ステータス
-        row_data[23] = f"ERROR: {data.get('error')}"  # X: メモ
+        row_data[22] = "エラー"  # W: ステータス
+        row_data[24] = f"ERROR: {data.get('error')}"  # Y: メモ
     else:
-        row_data[21] = "要確認"  # V: ステータス
-        row_data[23] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # X: メモ
-    # W: 出品フラグは空（ユーザーが手動で入力）
+        row_data[22] = "要確認"  # W: ステータス
+        row_data[24] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # Y: メモ
+    # X: 出品フラグは空（ユーザーが手動で入力）
 
-    # Write to specific row (A〜X列：24列のみ。はみ出し防止)
-    cell_range = f"A{row_number}:X{row_number}"
-    worksheet.update(range_name=cell_range, values=[row_data[:24]])
+    # Write to specific row (A〜Y列：25列のみ。はみ出し防止)
+    cell_range = f"A{row_number}:Y{row_number}"
+    worksheet.update(range_name=cell_range, values=[row_data[:25]])
 
     print(f"  [WRITE] Written to row {row_number}")
 

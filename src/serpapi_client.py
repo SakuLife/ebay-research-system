@@ -2,7 +2,7 @@
 
 import os
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 try:
@@ -359,7 +359,7 @@ class SerpApiClient:
         item_location: str = "japan",
         condition: str = "any",
         page: int = 1
-    ) -> List[SoldItem]:
+    ) -> Tuple[List[SoldItem], int]:
         """
         eBayで売れた商品（完了したリスティング）を検索する.
 
@@ -373,11 +373,11 @@ class SerpApiClient:
             condition: 商品状態 ("new", "used", "any")
 
         Returns:
-            SoldItemのリスト
+            (SoldItemのリスト, 総販売実績数) のタプル
         """
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
-            return []
+            return [], 0
 
         # Market to domain mapping
         domain_map = {
@@ -439,10 +439,14 @@ class SerpApiClient:
             # Check for errors
             if "error" in results:
                 print(f"  [ERROR] SerpApi error: {results['error']}")
-                return []
+                return [], 0
+
+            # 総販売実績数を取得（SerpApi search_information から）
+            search_info = results.get("search_information", {})
+            total_results = search_info.get("total_results", 0)
 
             organic = results.get("organic_results", [])
-            print(f"  [SerpApi] Found {len(organic)} sold items")
+            print(f"  [SerpApi] Found {len(organic)} sold items (total: {total_results})")
 
             sold_items = []
             seen_item_ids = set()  # 重複item_id除外用
@@ -568,11 +572,15 @@ class SerpApiClient:
                     print(f"  [WARN] Failed to parse sold item: {e}")
                     continue
 
-            return sold_items
+            # total_resultsが0の場合、取得件数をフォールバックとして使用
+            if total_results == 0:
+                total_results = len(sold_items)
+
+            return sold_items, total_results
 
         except Exception as e:
             print(f"  [ERROR] SerpApi request failed: {e}")
-            return []
+            return [], 0
 
     def search_amazon_jp(
         self,

@@ -80,6 +80,7 @@ jobs:
 
       - name: Upload pipeline logs
         if: always()
+        continue-on-error: true  # ストレージ枠超過時もパイプライン失敗にしない
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-logs-${{ github.run_id }}

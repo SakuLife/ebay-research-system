@@ -1414,24 +1414,34 @@ def is_accessory_product(title: str) -> tuple[bool, str]:
     if re.search(r'\bfor\s+[a-z]', title_lower):
         return (True, "For [Brand]")
 
-    # アクセサリーキーワード
-    accessory_keywords = [
+    # アクセサリーキーワード（日本語: 部分一致OK）
+    accessory_keywords_ja = [
         # ケース・カバー類
-        "ケース", "カバー", "case", "cover", "保護", "フィルム", "film",
-        "スクリーンプロテクター", "screen protector",
+        "ケース", "カバー", "保護", "フィルム", "スクリーンプロテクター",
         # 充電・電源関連
-        "充電器", "charger", "充電ケーブル", "cable", "アダプター", "adapter",
-        "acアダプタ", "電源", "バッテリー", "battery",
+        "充電器", "充電ケーブル", "アダプター", "acアダプタ", "電源", "バッテリー",
         # スタンド・ホルダー
-        "スタンド", "stand", "ホルダー", "holder", "マウント", "mount",
+        "スタンド", "ホルダー", "マウント",
         # ストラップ・アクセサリ
-        "ストラップ", "strap", "キーホルダー",
+        "ストラップ", "キーホルダー",
         # その他周辺機器
-        "対応", "専用", "互換", "compatible",
+        "対応", "専用", "互換",
     ]
 
-    for kw in accessory_keywords:
+    for kw in accessory_keywords_ja:
         if kw in title_lower:
+            return (True, kw)
+
+    # 英語キーワード: 単語境界(\b)で判定（"stand"が"Standard"に誤マッチしないように）
+    accessory_keywords_en = [
+        "case", "cover", "film", "screen protector",
+        "charger", "cable", "adapter", "battery",
+        "stand", "holder", "mount",
+        "strap", "compatible",
+    ]
+
+    for kw in accessory_keywords_en:
+        if re.search(r'\b' + re.escape(kw) + r'\b', title_lower):
             return (True, kw)
 
     return (False, "")

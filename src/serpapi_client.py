@@ -97,6 +97,7 @@ class SoldItem:
     thumbnail: str = ""  # 商品サムネイル画像URL
     category_id: str = ""
     category_name: str = ""
+    quantity_sold: int = 0  # 個別商品の販売数（SerpApi extracted_quantity_sold）
 
 
 @dataclass
@@ -555,6 +556,9 @@ class SerpApiClient:
                         if cat_keys:
                             print(f"    [DEBUG] Cat keys found: {cat_keys} = {[item.get(k) for k in cat_keys]}")
 
+                    # 個別商品の販売数を取得（SerpApiが返す場合）
+                    qty_sold = item.get("extracted_quantity_sold", 0) or 0
+
                     sold_items.append(SoldItem(
                         title=title,
                         price=price,
@@ -566,6 +570,7 @@ class SerpApiClient:
                         thumbnail=thumbnail,
                         category_id=category_id,
                         category_name=category_name,
+                        quantity_sold=qty_sold,
                     ))
 
                 except Exception as e:

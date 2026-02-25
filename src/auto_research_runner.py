@@ -2137,7 +2137,12 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data[14] = data.get("ebay_url", "")  # O: eBayリンク
     # P: 販売数（eBay販売実績数）
     sold_count = data.get("sold_count", "")
-    row_data[15] = str(int(sold_count)) if sold_count not in ("", None, 0) else ""
+    if sold_count not in ("", None):
+        try:
+            row_data[15] = str(int(sold_count))
+        except (ValueError, TypeError):
+            row_data[15] = str(sold_count)
+    print(f"  [DEBUG] sold_count={sold_count} (type={type(sold_count).__name__}) → row_data[15]='{row_data[15]}'")
     # 販売価格・送料は小数第1位までにフォーマット（0も有効な値として扱う）
     ebay_price = data.get("ebay_price")
     ebay_shipping = data.get("ebay_shipping")
@@ -2429,7 +2434,7 @@ def main():
                     ebay_item_url=sold_item.link,
                     ebay_price=price_usd,
                     ebay_shipping=0.0,  # SerpApi doesn't provide shipping cost separately
-                    sold_signal=ebay_sold_total,  # SerpApiの総販売実績数
+                    sold_signal=sold_item.quantity_sold,  # 個別商品の販売数
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
@@ -2534,7 +2539,7 @@ def main():
                             ebay_item_url=sold_item.link,
                             ebay_price=price_usd,
                             ebay_shipping=0.0,
-                            sold_signal=ebay_sold_total,  # 1ページ目の総販売実績数を引き継ぐ
+                            sold_signal=sold_item.quantity_sold,  # 個別商品の販売数
                             ebay_title=sold_item.title,
                             currency=sold_item.currency,
                             image_url=sold_item.thumbnail,

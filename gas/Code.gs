@@ -4,7 +4,7 @@
  */
 
 // === 設定 ===
-const GITHUB_TOKEN = 'REDACTED_TOKEN'; // GitHub Personal Access Token
+const GITHUB_TOKEN = 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN'; // GitHub Personal Access Token（GASスクリプトエディタで設定）
 const GITHUB_OWNER = 'SakuLife'; // GitHubユーザー名
 const GITHUB_REPO = 'ebay-research-system'; // リポジトリ名
 const INPUT_SHEET_NAME = '入力シート'; // 入力シートの名前

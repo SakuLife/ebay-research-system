@@ -1425,7 +1425,7 @@ def is_accessory_product(title: str) -> tuple[bool, str]:
         # ストラップ・アクセサリ
         "ストラップ", "キーホルダー",
         # その他周辺機器
-        "対応", "専用", "互換",
+        "専用", "互換",
     ]
 
     for kw in accessory_keywords_ja:

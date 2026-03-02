@@ -2358,6 +2358,9 @@ def main():
     # 画像ハッシュベース重複検出（タイトルが違っても同じ商品画像ならキャッシュヒット）
     image_hash_cache: Dict[str, str] = {}  # dhash → cache_key (sourcing_cacheのキー)
 
+    # SerpApiClientをキーワードループ外で1回だけ生成（クォータ枯渇フラグを保持するため）
+    serpapi_client = SerpApiClient()
+
     for raw_keyword in keywords:
         # タイムアウトチェック（キーワードループ先頭）
         elapsed = time.time() - pipeline_start_time
@@ -2395,7 +2398,6 @@ def main():
         item_location = settings.get("item_location", "japan")
 
         # Try SerpApi first (sold items - past completed listings)
-        serpapi_client = SerpApiClient()
         sold_items = []
 
         if serpapi_client.is_enabled:

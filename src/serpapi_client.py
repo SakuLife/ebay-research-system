@@ -335,11 +335,27 @@ class SerpApiClient:
         """
         self.api_key = api_key or os.getenv("SERP_API_KEY")
         self.is_enabled = bool(self.api_key) and SERPAPI_AVAILABLE
+        self._quota_exhausted = False  # クォータ枯渇フラグ
 
         if not SERPAPI_AVAILABLE:
             print("  [WARN] SerpApi library not installed. Run: pip install google-search-results")
         elif not self.api_key:
             print("  [WARN] SERP_API_KEY not set. SerpApi disabled.")
+
+    @property
+    def quota_exhausted(self) -> bool:
+        return self._quota_exhausted
+
+    def _check_quota_error(self, results: dict) -> bool:
+        """クォータ枯渇エラーを検出してフラグを立てる. Trueなら枯渇."""
+        if "error" in results:
+            error_msg = results["error"]
+            if "run out of searches" in error_msg.lower():
+                if not self._quota_exhausted:
+                    print(f"  [CRITICAL] SerpApi quota exhausted! 以降のSerpApi呼び出しをスキップします")
+                self._quota_exhausted = True
+                return True
+        return False
 
     # eBay Item Location codes
     EBAY_LOCATION_CODES = {
@@ -378,6 +394,9 @@ class SerpApiClient:
         """
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
+            return [], 0
+        if self._quota_exhausted:
+            print("  [SKIP] SerpApi quota exhausted")
             return [], 0
 
         # Market to domain mapping
@@ -440,6 +459,7 @@ class SerpApiClient:
             # Check for errors
             if "error" in results:
                 print(f"  [ERROR] SerpApi error: {results['error']}")
+                self._check_quota_error(results)
                 return [], 0
 
             # 総販売実績数を取得（SerpApi search_information から）
@@ -606,6 +626,9 @@ class SerpApiClient:
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
             return []
+        if self._quota_exhausted:
+            print("  [SKIP] SerpApi quota exhausted")
+            return []
 
         params = {
             "engine": "amazon",
@@ -621,6 +644,7 @@ class SerpApiClient:
 
             if "error" in results:
                 print(f"  [ERROR] SerpApi Amazon error: {results['error']}")
+                self._check_quota_error(results)
                 return []
 
             organic = results.get("organic_results", [])
@@ -715,6 +739,9 @@ class SerpApiClient:
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
             return []
+        if self._quota_exhausted:
+            print("  [SKIP] SerpApi quota exhausted")
+            return []
 
         params = {
             "engine": "aliexpress",
@@ -729,6 +756,7 @@ class SerpApiClient:
 
             if "error" in results:
                 print(f"  [ERROR] SerpApi AliExpress error: {results['error']}")
+                self._check_quota_error(results)
                 return []
 
             organic = results.get("organic_results", [])
@@ -944,6 +972,9 @@ class SerpApiClient:
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
             return []
+        if self._quota_exhausted:
+            print("  [SKIP] SerpApi quota exhausted")
+            return []
 
         if global_search:
             # グローバル検索（AliExpress, Amazon.com等も含む）
@@ -973,6 +1004,7 @@ class SerpApiClient:
 
             if "error" in results:
                 print(f"  [ERROR] SerpApi Google Shopping error: {results['error']}")
+                self._check_quota_error(results)
                 return []
 
             shopping_results = results.get("shopping_results", [])
@@ -1245,6 +1277,9 @@ class SerpApiClient:
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
             return []
+        if self._quota_exhausted:
+            print("  [SKIP] SerpApi quota exhausted")
+            return []
 
         params = {
             "engine": "google_lens",
@@ -1261,6 +1296,7 @@ class SerpApiClient:
 
             if "error" in results:
                 print(f"  [ERROR] SerpApi Google Lens error: {results['error']}")
+                self._check_quota_error(results)
                 return []
 
             # visual_matches に視覚的に似ている商品が入っている
@@ -1413,6 +1449,9 @@ class SerpApiClient:
         if not self.is_enabled:
             print("  [WARN] SerpApi is not available")
             return []
+        if self._quota_exhausted:
+            print("  [SKIP] SerpApi quota exhausted")
+            return []
 
         # 「通販」を追加して通販サイトを優先的にヒット
         search_query = f"{keyword} 通販"
@@ -1434,6 +1473,7 @@ class SerpApiClient:
 
             if "error" in results:
                 print(f"  [ERROR] SerpApi Google Web error: {results['error']}")
+                self._check_quota_error(results)
                 return []
 
             organic_results = results.get("organic_results", [])

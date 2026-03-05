@@ -2436,7 +2436,7 @@ def main():
                     ebay_item_url=sold_item.link,
                     ebay_price=price_usd,
                     ebay_shipping=0.0,  # SerpApi doesn't provide shipping cost separately
-                    sold_signal=sold_item.quantity_sold,  # 個別商品の販売数
+                    sold_signal=ebay_sold_total,  # キーワードレベルの販売実績数
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
@@ -2541,7 +2541,7 @@ def main():
                             ebay_item_url=sold_item.link,
                             ebay_price=price_usd,
                             ebay_shipping=0.0,
-                            sold_signal=sold_item.quantity_sold,  # 個別商品の販売数
+                            sold_signal=ebay_sold_total,  # キーワードレベルの販売実績数
                             ebay_title=sold_item.title,
                             currency=sold_item.currency,
                             image_url=sold_item.thumbnail,

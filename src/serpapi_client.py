@@ -578,7 +578,7 @@ class SerpApiClient:
 
                     # 個別商品の販売数を取得（SerpApiが返す場合）
                     # sold検索結果に含まれている＝最低1個は売れている
-                    qty_sold = item.get("extracted_quantity_sold", 0) or 1
+                    qty_sold = item.get("extracted_quantity_sold", 0) or 0
 
                     sold_items.append(SoldItem(
                         title=title,

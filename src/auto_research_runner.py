@@ -2430,13 +2430,16 @@ def main():
                 usd_rate = usd_rates.get(sold_item.currency, 1.0)
                 price_usd = sold_item.price * usd_rate
 
+                # ハイブリッド: 個別Total soldがあればそれを、なければキーワード全体の販売実績数
+                item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
+
                 sold_items.append(ListingCandidate(
                     candidate_id=sold_item.item_id,
                     search_query=keyword,
                     ebay_item_url=sold_item.link,
                     ebay_price=price_usd,
                     ebay_shipping=0.0,  # SerpApi doesn't provide shipping cost separately
-                    sold_signal=ebay_sold_total,  # キーワードレベルの販売実績数
+                    sold_signal=item_sold,  # 個別Total sold or キーワード全体
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
@@ -2535,13 +2538,16 @@ def main():
                         usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
                         usd_rate = usd_rates.get(sold_item.currency, 1.0)
                         price_usd = sold_item.price * usd_rate
+                        # ハイブリッド: 個別Total soldがあればそれを、なければキーワード全体
+                        item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
+
                         active_items.append(ListingCandidate(
                             candidate_id=sold_item.item_id,
                             search_query=keyword,
                             ebay_item_url=sold_item.link,
                             ebay_price=price_usd,
                             ebay_shipping=0.0,
-                            sold_signal=ebay_sold_total,  # キーワードレベルの販売実績数
+                            sold_signal=item_sold,  # 個別Total sold or キーワード全体
                             ebay_title=sold_item.title,
                             currency=sold_item.currency,
                             image_url=sold_item.thumbnail,

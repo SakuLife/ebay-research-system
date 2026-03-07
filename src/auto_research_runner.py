@@ -30,6 +30,74 @@ import io
 import requests as _requests
 from PIL import Image as _PILImage
 
+# === チューニング定数 ===
+# 仕入先キャッシュの類似度閾値（別キャラ流用を防ぐため高めに設定）
+# 変更前: 0.75 → 変更後: 0.92（戻す場合は0.75に）
+CACHE_SIMILARITY_THRESHOLD = 0.92
+# 仕入先なし重複スキップの類似度閾値
+# 変更前: 0.85 → 変更後: 0.92
+CACHE_SKIP_SIMILARITY_THRESHOLD = 0.92
+# 商品グルーピングの類似度閾値（同一商品と判定するライン）
+# 「ポテチうすしお」と「ポテチコンソメ」は別物、同じ商品の別出品者は合算
+PRODUCT_GROUP_SIMILARITY = 0.70
+
+
+def _aggregate_sold_by_product(
+    sold_results: list,
+) -> Dict[str, int]:
+    """
+    SerpAPI sold検索結果をタイトル類似度でグルーピングし、同一商品の販売数を合算する.
+
+    例: Calbeeで検索した結果に以下がある場合:
+      - "Calbee Potato Chips Lightly Salted" (sold: 3) x 2出品者
+      - "Calbee Consomme Punch" (sold: 2) x 1出品者
+    → うすしおグループ: 合算6（各出品者は最低1は売れているので、qty_sold=0の場合1として加算）
+    → コンソメグループ: 合算2
+
+    Args:
+        sold_results: SerpApiのSoldItemリスト
+
+    Returns:
+        item_id → グループ合算販売数 のマッピング
+    """
+    if not sold_results:
+        return {}
+
+    # グループ: [(代表タイトル, [SoldItemのリスト])]
+    groups: List[tuple] = []
+
+    for item in sold_results:
+        title_lower = item.title.lower().strip()
+        matched_group = None
+
+        for i, (rep_title, members) in enumerate(groups):
+            sim = SequenceMatcher(None, title_lower, rep_title).ratio()
+            if sim >= PRODUCT_GROUP_SIMILARITY:
+                matched_group = i
+                break
+
+        if matched_group is not None:
+            groups[matched_group][1].append(item)
+        else:
+            groups.append((title_lower, [item]))
+
+    # 各グループの販売数を合算
+    # sold検索に出てくる＝最低1つは売れているので、qty_sold=0の場合は1として加算
+    result: Dict[str, int] = {}
+    for rep_title, members in groups:
+        group_total = sum(max(m.quantity_sold, 1) for m in members)
+        for m in members:
+            result[m.item_id] = group_total
+
+    # グルーピング結果をログ出力（2グループ以上ある場合のみ）
+    if len(groups) >= 2:
+        print(f"  [販売数合算] {len(sold_results)}件 → {len(groups)}グループ")
+        for rep_title, members in sorted(groups, key=lambda g: -sum(max(m.quantity_sold, 1) for m in g[1]))[:5]:
+            total = sum(max(m.quantity_sold, 1) for m in members)
+            print(f"    {total}件: {members[0].title[:60]}... ({len(members)}出品)")
+
+    return result
+
 
 def compute_image_dhash(image_url: str, hash_size: int = 12, timeout: int = 8) -> Optional[str]:
     """
@@ -2423,6 +2491,10 @@ def main():
                 print(f"  [SKIP] eBay販売実績 {ebay_sold_total}件 < min_sold {min_sold} → キーワードスキップ")
                 serpapi_results = []  # sold_items構築をスキップ
 
+            # 商品ごとの販売数を合算（タイトル類似度ベース）
+            # 例: Calbeeで検索 → ポテチうすしお x 3出品、コンソメ x 2出品 → それぞれ合算
+            grouped_sold_counts = _aggregate_sold_by_product(serpapi_results)
+
             # Convert SerpApi results to ListingCandidate format
             for sold_item in serpapi_results:
                 # Convert price to USD
@@ -2430,8 +2502,10 @@ def main():
                 usd_rate = usd_rates.get(sold_item.currency, 1.0)
                 price_usd = sold_item.price * usd_rate
 
-                # ハイブリッド: 個別Total soldがあればそれを、なければキーワード全体の販売実績数
-                item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
+                # 商品グループ別の合算販売数を使用（なければキーワード全体をフォールバック）
+                item_sold = grouped_sold_counts.get(sold_item.item_id, 0)
+                if item_sold == 0:
+                    item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
 
                 sold_items.append(ListingCandidate(
                     candidate_id=sold_item.item_id,
@@ -2439,7 +2513,7 @@ def main():
                     ebay_item_url=sold_item.link,
                     ebay_price=price_usd,
                     ebay_shipping=0.0,  # SerpApi doesn't provide shipping cost separately
-                    sold_signal=item_sold,  # 個別Total sold or キーワード全体
+                    sold_signal=item_sold,  # 商品グループ合算 or 個別 or キーワード全体
                     ebay_title=sold_item.title,
                     currency=sold_item.currency,
                     image_url=sold_item.thumbnail,  # サムネイル画像（Google Lens検索用）
@@ -2533,13 +2607,17 @@ def main():
                 )
                 log_serpapi_call("eBay Sold P2", keyword, len(page2_results))
                 if page2_results:
+                    # 2ページ目も商品グループ別販売数を合算
+                    page2_grouped = _aggregate_sold_by_product(page2_results)
                     page2_added = 0
                     for sold_item in page2_results:
                         usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
                         usd_rate = usd_rates.get(sold_item.currency, 1.0)
                         price_usd = sold_item.price * usd_rate
-                        # ハイブリッド: 個別Total soldがあればそれを、なければキーワード全体
-                        item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
+                        # 商品グループ別の合算販売数を使用
+                        item_sold = page2_grouped.get(sold_item.item_id, 0)
+                        if item_sold == 0:
+                            item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
 
                         active_items.append(ListingCandidate(
                             candidate_id=sold_item.item_id,
@@ -2547,7 +2625,7 @@ def main():
                             ebay_item_url=sold_item.link,
                             ebay_price=price_usd,
                             ebay_shipping=0.0,
-                            sold_signal=item_sold,  # 個別Total sold or キーワード全体
+                            sold_signal=item_sold,  # 商品グループ合算 or 個別 or キーワード全体
                             ebay_title=sold_item.title,
                             currency=sold_item.currency,
                             image_url=sold_item.thumbnail,
@@ -2608,7 +2686,7 @@ def main():
                 title_lower = ebay_title.lower().strip()
                 for prev_title, cache_key in global_processed_titles:
                     sim = SequenceMatcher(None, title_lower, prev_title.lower().strip()).ratio()
-                    if sim >= 0.75:
+                    if sim >= CACHE_SIMILARITY_THRESHOLD:
                         if cache_key in sourcing_cache:
                             # 仕入先キャッシュあり → 検索スキップして結果を再利用
                             cached = sourcing_cache[cache_key]
@@ -2632,7 +2710,7 @@ def main():
 
                 # 仕入先なし重複の場合はcontinue
                 if not cache_hit and any(
-                    SequenceMatcher(None, ebay_title.lower().strip(), pt.lower().strip()).ratio() >= 0.85
+                    SequenceMatcher(None, ebay_title.lower().strip(), pt.lower().strip()).ratio() >= CACHE_SKIP_SIMILARITY_THRESHOLD
                     for pt, _ in global_processed_titles
                 ):
                     continue

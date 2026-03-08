@@ -2668,6 +2668,15 @@ def main():
                 skipped_this_keyword += 1
                 continue
 
+            # 個別商品のsold_signalがmin_sold未満ならスキップ
+            # （キーワード全体のebay_sold_totalは通過しても、商品グループ合算で少ない場合）
+            item_sold_signal = getattr(item, 'sold_signal', 0) or 0
+            if min_sold > 0 and 0 < item_sold_signal < min_sold:
+                print(f"\n  [SKIP] 商品別販売数 {item_sold_signal}件 < min_sold {min_sold}: {ebay_title[:50]}...")
+                skip_reasons["other"] += 1
+                skipped_this_keyword += 1
+                continue
+
             # Used検索時にNewアイテムをスキップ（SerpApiフィルター漏れ対策）
             ebay_item_condition = getattr(item, 'ebay_condition', '') or ''
             if condition != "New" and ebay_item_condition:

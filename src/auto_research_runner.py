@@ -1548,6 +1548,15 @@ def is_limited_edition_product(title: str) -> tuple[bool, str]:
         "ラストワン賞", "ラストワン",
     ]
 
+    # シリーズ名に "limited" を含むが限定品ではないもの
+    whitelist = [
+        "tomica limited vintage",   # タカラトミーの通常ラインナップ
+        "tomica limited",           # 同上（vintage無しパターン）
+    ]
+    for wl in whitelist:
+        if wl in title_lower:
+            return (False, "")
+
     for kw in limited_keywords:
         if kw in title_lower:
             return (True, kw)

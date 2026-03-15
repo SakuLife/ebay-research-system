@@ -3985,7 +3985,7 @@ def main():
                 "category_name": category_name,
                 "category_id": category_id,
                 "condition": condition,  # 新品中古（New/Used）
-                "sold_count": getattr(item, 'sold_signal', 0),  # eBay販売実績数
+                "sold_count": max(getattr(item, 'sold_signal', 0), min_sold),  # 最低でもmin_sold以上を表示
                 "error": error_reason  # エラー理由（None or 文字列）
             }
 

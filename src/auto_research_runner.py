@@ -2699,6 +2699,13 @@ def main():
                         if cache_key in sourcing_cache:
                             # 仕入先キャッシュあり → 検索スキップして結果を再利用
                             cached = sourcing_cache[cache_key]
+                            # キャッシュの仕入値が異常低価格なら再検索にフォールバック
+                            cached_src = cached["top_sources"][0].source if cached["top_sources"] else None
+                            cached_price = (cached_src.source_price_jpy + cached_src.source_shipping_jpy) if cached_src else 0
+                            if 0 < cached_price < 500:
+                                print(f"\n  [CACHE SKIP] キャッシュの仕入値 JPY {cached_price:.0f} が異常 → 再検索")
+                                del sourcing_cache[cache_key]
+                                break
                             print(f"\n  [CACHE HIT] 類似商品の仕入先を再利用 (類似度: {sim:.0%})")
                             print(f"    Current: {ebay_title[:60]}...")
                             print(f"    Cached:  {prev_title[:60]}...")
@@ -3996,7 +4003,7 @@ def main():
                 output_ebay_titles.append(ebay_title)  # 重複検出用に記録
                 # キーワード横断キャッシュに登録
                 cache_key = ebay_title.lower().strip()
-                if top_sources and not cache_hit:
+                if top_sources and not cache_hit and not error_reason:
                     sourcing_cache[cache_key] = {
                         "top_sources": top_sources,
                         "search_method": search_method,

@@ -427,7 +427,7 @@ class SerpApiClient:
             "_nkw": search_keyword,
             "LH_Sold": "1",       # 売れた商品
             "LH_Complete": "1",   # 完了したリスティング
-            "_ipg": str(min(max_results * 2, 60)),  # 余裕を持って取得
+            "_ipg": str(min(max_results * 2, 240)),  # eBay最大240件/ページ
             "_pgn": str(page),  # ページ番号（1始まり）
             "api_key": self.api_key
         }

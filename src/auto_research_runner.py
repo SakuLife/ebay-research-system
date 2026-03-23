@@ -1528,24 +1528,17 @@ def is_limited_edition_product(title: str) -> tuple[bool, str]:
     """
     title_lower = title.lower()
 
-    # 限定品を示すキーワード
+    # 限定品を示すキーワード（入手困難なもののみ）
+    # NOTE: "limited", "exclusive", "collector", "premium" 等は一般商品名に
+    # 頻出するため除外。本当にフリマ/抽選でしか入手できないものだけフィルタする。
     limited_keywords = [
-        # 日本語
-        "限定", "限定版", "限定盤", "特典", "初回", "先着", "予約特典",
-        "数量限定", "期間限定", "店舗限定", "コレクターズ", "特別版",
-        "プレミアム", "初版", "生産終了", "プロモ",
-        "一番くじ",  # コンビニ抽選商品（フリマでしか入手不可）
-        # 英語
-        "limited edition", "limited", "bonus", "first edition", "pre-order",
-        "collector's", "collector", "special edition", "exclusive",
-        "premium edition", "deluxe edition", "japan exclusive",
-        "store exclusive", "event exclusive", "convention exclusive",
-        "promo", "promotional", "serial number",  # プロモカード、シリアル番号入り
-        "ichiban kuji", "lottery prize", "last one prize", "prize figure",  # 一番くじ系
-        # 日本語一番くじパターン
+        # 一番くじ系（コンビニ抽選商品、フリマでしか入手不可）
+        "ichiban kuji", "lottery prize", "last one prize", "prize figure",
         "一番くじ", "いちばんくじ",
         "a賞", "b賞", "c賞", "d賞", "e賞", "f賞", "g賞", "h賞",
         "ラストワン賞", "ラストワン",
+        # プロモカード（配布限定）
+        "promo card", "promotional card",
     ]
 
     # シリーズ名に "limited" を含むが限定品ではないもの
@@ -2484,7 +2477,7 @@ def main():
 
             # 出力目標数を達成するため、余裕を持って検索（処理済みスキップ分を考慮）
             # スキップが多いため、目標の10倍まで取得可能に
-            search_buffer = min(items_per_keyword * 10, 60)
+            search_buffer = min(items_per_keyword * 20, 120)
             serpapi_results, ebay_sold_total = serpapi_client.search_sold_items(
                 keyword,
                 market=market,
@@ -2582,7 +2575,8 @@ def main():
         items_output_this_keyword = 0
         skipped_this_keyword = 0  # このキーワードでのスキップ数
         output_ebay_titles = []   # このキーワードで出力済みのeBayタイトル（重複検出用）
-        page2_fetched = False     # 2ページ目取得済みフラグ
+        next_page_to_fetch = 2    # 次に取得するページ番号
+        max_pages = 4             # 最大ページ数（1ページ最大120件 × 4 = 480件）
         page1_count = len(active_items)  # 1ページ目の件数
         item_loop_idx = 0         # ループカウンタ
 
@@ -2598,33 +2592,32 @@ def main():
                 timeout_reached = True
                 break
 
-            # === 2ページ目の自動取得 ===
-            # 残りアイテムが5件以下で目標未達、かつ1ページ目が50件以上あった場合
+            # === 次ページの自動取得 ===
+            # 残りアイテムが5件以下で目標未達なら次ページを取得（最大4ページまで）
             item_loop_idx += 1
             items_remaining = len(active_items) - item_loop_idx
-            if (not page2_fetched
+            if (next_page_to_fetch <= max_pages
                     and items_remaining <= 5
                     and items_output_this_keyword < items_per_keyword
-                    and page1_count >= 50
+                    and page1_count >= 10
                     and serpapi_client.is_enabled):
-                page2_fetched = True
-                print(f"\n  [PAGE 2] 目標未達 ({items_output_this_keyword}/{items_per_keyword}), 残り{items_remaining}件 → 2ページ目取得")
-                page2_results, _ = serpapi_client.search_sold_items(
+                page_num = next_page_to_fetch
+                next_page_to_fetch += 1
+                print(f"\n  [PAGE {page_num}] 目標未達 ({items_output_this_keyword}/{items_per_keyword}), 残り{items_remaining}件 → {page_num}ページ目取得")
+                next_page_results, _ = serpapi_client.search_sold_items(
                     keyword, market=market, min_price=min_price_local,
                     max_results=search_buffer, item_location=item_location,
-                    condition=ebay_condition, page=2
+                    condition=ebay_condition, page=page_num
                 )
-                log_serpapi_call("eBay Sold P2", keyword, len(page2_results))
-                if page2_results:
-                    # 2ページ目も商品グループ別販売数を合算
-                    page2_grouped = _aggregate_sold_by_product(page2_results)
-                    page2_added = 0
-                    for sold_item in page2_results:
+                log_serpapi_call(f"eBay Sold P{page_num}", keyword, len(next_page_results))
+                if next_page_results:
+                    next_page_grouped = _aggregate_sold_by_product(next_page_results)
+                    page_added = 0
+                    for sold_item in next_page_results:
                         usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
                         usd_rate = usd_rates.get(sold_item.currency, 1.0)
                         price_usd = sold_item.price * usd_rate
-                        # 商品グループ別の合算販売数を使用
-                        item_sold = page2_grouped.get(sold_item.item_id, 0)
+                        item_sold = next_page_grouped.get(sold_item.item_id, 0)
                         if item_sold == 0:
                             item_sold = sold_item.quantity_sold if sold_item.quantity_sold > 0 else ebay_sold_total
 
@@ -2634,7 +2627,7 @@ def main():
                             ebay_item_url=sold_item.link,
                             ebay_price=price_usd,
                             ebay_shipping=0.0,
-                            sold_signal=item_sold,  # 商品グループ合算 or 個別 or キーワード全体
+                            sold_signal=item_sold,
                             ebay_title=sold_item.title,
                             currency=sold_item.currency,
                             image_url=sold_item.thumbnail,
@@ -2642,10 +2635,11 @@ def main():
                             category_name=sold_item.category_name,
                             ebay_condition=sold_item.condition,
                         ))
-                        page2_added += 1
-                    print(f"  [PAGE 2] {page2_added}件追加 → 合計{len(active_items)}件")
+                        page_added += 1
+                    print(f"  [PAGE {page_num}] {page_added}件追加 → 合計{len(active_items)}件")
                 else:
-                    print(f"  [PAGE 2] 追加結果なし")
+                    print(f"  [PAGE {page_num}] 追加結果なし → これ以上のページなし")
+                    next_page_to_fetch = max_pages + 1  # もうページがないので停止
             ebay_url = item.ebay_item_url
             ebay_price = item.ebay_price
             ebay_shipping = item.ebay_shipping

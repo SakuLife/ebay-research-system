@@ -3163,9 +3163,10 @@ def main():
                     else:
                         print(f"    → 類似度閾値(30%)未満のため選択なし")
 
-            # === 4. Google Lens画像検索（最後の手段）===
-            # EN検索でも見つからなかった場合のみ実行（成功率3%だがEN未検出の商品を拾える可能性）
-            if serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en and not skip_lens:
+            # === 4. Google Lens画像検索（コスト効率が低いため無効化中）===
+            # 過去実績: 70+ calls, 0 adopted (0%)。コスト削減のため一時停止。
+            # Vision+楽天（無料）で代替済み。再有効化する場合はここのFalseを戻す。
+            if False and serpapi_client.is_enabled and image_url and not best_source and not skip_lens_and_en and not skip_lens:
                 print(f"  [Step 4] Google Lens画像検索 (最後の手段)")
                 print(f"    Image URL: {image_url[:80]}...")
                 # conditionをserpapi側に渡す（フリマ除外はserpapi側で実行）

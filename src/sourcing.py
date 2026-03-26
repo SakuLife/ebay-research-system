@@ -155,6 +155,46 @@ class RakutenClient:
         self.affiliate_id = affiliate_id
         self.is_enabled = bool(self.application_id)
 
+    @staticmethod
+    def _is_used_item(item_name: str, shop_name: str = "") -> bool:
+        """中古品かどうかをタイトル・ショップ名から判定する."""
+        text = (item_name + " " + shop_name).lower()
+
+        # 中古を示すキーワード
+        used_keywords = [
+            "中古", "used", "ジャンク", "junk",
+            "難あり", "訳あり", "傷あり",
+            "プレイ用",
+            # 状態ランク表記（中古品特有）
+            "ランクa", "ランクb", "ランクc", "ランクs",
+            "aランク", "bランク", "cランク", "sランク",
+            "rank a", "rank b", "rank c",
+            # アウトレット・展示品
+            "展示品", "展示処分", "店頭展示",
+            # 古書・レトロ
+            "古書", "古本",
+        ]
+
+        # 中古ショップ名パターン
+        used_shop_patterns = [
+            "中古", "リサイクル", "買取", "質屋",
+            "ブックオフ", "bookoff", "ハードオフ", "hardoff",
+            "ゲオ", "geo", "セカンドストリート", "2ndstreet",
+            "トレジャーファクトリー", "コメ兵", "komehyo",
+            "まんだらけ", "mandarake", "駿河屋", "suruga-ya",
+        ]
+
+        for kw in used_keywords:
+            if kw in text:
+                return True
+
+        shop_lower = shop_name.lower()
+        for pattern in used_shop_patterns:
+            if pattern in shop_lower:
+                return True
+
+        return False
+
     def search(self, keyword: str) -> Optional[SourceOffer]:
         if not self.is_enabled:
             return None
@@ -180,8 +220,17 @@ class RakutenClient:
         items = data.get("Items", [])
         if not items:
             return None
-        # Pick the cheapest item by itemPrice.
-        best = min(items, key=lambda i: i.get("Item", {}).get("itemPrice", 10**12))
+        # 中古品を除外してから最安値を選択
+        new_items = [
+            i for i in items
+            if not self._is_used_item(
+                i.get("Item", {}).get("itemName", ""),
+                i.get("Item", {}).get("shopName", ""),
+            )
+        ]
+        if not new_items:
+            return None
+        best = min(new_items, key=lambda i: i.get("Item", {}).get("itemPrice", 10**12))
         item = best.get("Item", {})
         price = float(item.get("itemPrice", 0))
         url = item.get("itemUrl", "")
@@ -228,14 +277,22 @@ class RakutenClient:
         if not items:
             return []
 
-        # Convert all items to SourceOffer and sort by price
+        # 中古品を除外してからSourceOfferに変換
         offers = []
+        used_excluded = 0
         for item_wrapper in items:
             item = item_wrapper.get("Item", {})
+            item_name = item.get("itemName", "")
+            shop_name = item.get("shopName", "")
+
+            # 中古品フィルタ
+            if self._is_used_item(item_name, shop_name):
+                used_excluded += 1
+                continue
+
             price = float(item.get("itemPrice", 0))
             url = item.get("itemUrl", "")
             availability = item.get("availability", 0)
-            item_name = item.get("itemName", "")
             # 送料: postageFlag=1は送料無料、0は有料（デフォルト700円推定）
             postage_flag = item.get("postageFlag", 0)
             shipping = 0.0 if postage_flag == 1 else 700.0
@@ -253,6 +310,9 @@ class RakutenClient:
                     title=item_name,
                     source_image_url=image_url,
                 ))
+
+        if used_excluded > 0:
+            print(f"    [楽天] 中古品除外: {used_excluded}件")
 
         # Sort by total price (price + shipping) and return top N
         offers.sort(key=lambda o: o.source_price_jpy + o.source_shipping_jpy)

@@ -1416,6 +1416,7 @@ def is_valid_source_for_condition(source_site: str, source_url: str, condition: 
         "/refurbished/",    # リファービッシュ
         "/outlet/",         # アウトレット品
         "condition=used",   # Amazon等の中古品パラメータ
+        "product.rakuten.co.jp",  # 楽天価格比較ページ（中古品混在）
     ]
     if any(pattern in url_lower for pattern in used_path_patterns):
         return False

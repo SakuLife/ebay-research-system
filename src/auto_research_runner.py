@@ -3874,7 +3874,9 @@ def main():
                         sold_price_usd=ebay_price,
                         market=market,
                         item_location=item_location,
-                        condition=condition
+                        condition=condition,
+                        gemini_client=gemini_client,
+                        ebay_image_url=image_url,
                     )
                     if cheapest:
                         old_price = ebay_price

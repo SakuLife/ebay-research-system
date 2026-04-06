@@ -534,13 +534,17 @@ class EbayClient:
         sold_price_usd: float,
         market: str = "UK",
         item_location: str = "japan",
-        condition: str = "New"
+        condition: str = "New",
+        gemini_client: Any = None,
+        ebay_image_url: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         売済み品のタイトルをベースに、同一商品の現在最安アクティブリスティングを検索.
 
         SerpAPIで見つけた売済み品と同一の商品が、より安い価格で
         アクティブ出品されていないかをBrowse APIで確認する。
+        Gemini画像比較が利用可能な場合、タイトル類似度が低い候補も
+        画像で同一商品判定を行い、より広範囲から最安値を探す。
 
         Args:
             ebay_title: eBayの商品タイトル（SerpAPI売済み品）
@@ -548,6 +552,8 @@ class EbayClient:
             market: マーケット (UK, US, EU)
             item_location: 出品者の所在地フィルター
             condition: 商品状態 ("New", "Used", None)
+            gemini_client: Geminiクライアント（画像比較用、Noneなら従来のタイトル判定のみ）
+            ebay_image_url: eBay商品の画像URL（Gemini画像比較用）
 
         Returns:
             Dict with cheapest active listing details, or None if not found
@@ -596,11 +602,18 @@ class EbayClient:
         params = {
             "q": search_query,
             "sort": "price",  # 最安値順
-            "limit": 20,
+            "limit": 200,  # 最大200件取得（旧: 20件）
             "filter": ",".join(filter_parts)
         }
 
         url = f"{self.browse_url}/item_summary/search"
+
+        # Gemini画像比較が利用可能か判定
+        use_gemini_image = (
+            gemini_client is not None
+            and ebay_image_url
+            and hasattr(gemini_client, 'compare_product_images')
+        )
 
         try:
             response = requests.get(url, headers=headers, params=params, timeout=15)
@@ -616,25 +629,65 @@ class EbayClient:
                 print(f"  [最安値検索] アクティブリスティングなし")
                 return None
 
-            print(f"  [最安値検索] {len(items)}件の候補を検索")
+            print(f"  [最安値検索] {len(items)}件の候補を検索 (Gemini画像比較: {'ON' if use_gemini_image else 'OFF'})")
 
             # USD変換レート
             usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
 
             # タイトル類似度で同一商品を判定し、最安値を選択
+            # 閾値: 50%以上 → 即採用、30-50% → Gemini画像比較で判定
+            SIMILARITY_AUTO_ACCEPT = 0.50  # タイトルだけで同一商品と判定
+            SIMILARITY_IMAGE_CHECK = 0.30  # 画像比較の対象にする下限
             ebay_title_lower = ebay_title.lower().strip()
             best_match = None
             skipped_low_sim = 0
+            gemini_checked = 0
+            gemini_matched = 0
 
             for item in items:
                 title = item.get("title", "")
                 title_lower = title.lower().strip()
 
-                # タイトル類似度チェック（同一商品かどうか）
+                # タイトル類似度チェック
                 sim = SequenceMatcher(None, ebay_title_lower, title_lower).ratio()
-                if sim < 0.50:
+
+                # 類似度30%未満は明らかに別商品 → スキップ
+                if sim < SIMILARITY_IMAGE_CHECK:
                     skipped_low_sim += 1
-                    continue  # 類似度50%未満は別商品
+                    continue
+
+                # 類似度30-50%: Gemini画像比較で同一商品判定
+                if sim < SIMILARITY_AUTO_ACCEPT:
+                    if not use_gemini_image:
+                        skipped_low_sim += 1
+                        continue  # Gemini未使用時は従来通り50%で足切り
+
+                    # 候補の画像URLを取得
+                    candidate_image = item.get("image", {}).get("imageUrl", "")
+                    if not candidate_image:
+                        # サムネイルURLもチェック
+                        candidate_image = item.get("thumbnailImages", [{}])[0].get("imageUrl", "") if item.get("thumbnailImages") else ""
+                    if not candidate_image:
+                        skipped_low_sim += 1
+                        continue
+
+                    # Gemini画像比較（APIコスト: 低）
+                    gemini_checked += 1
+                    try:
+                        is_match = gemini_client.compare_product_images(
+                            ebay_image_url=ebay_image_url,
+                            source_image_url=candidate_image,
+                            ebay_title=ebay_title,
+                            source_title=title,
+                        )
+                    except Exception as e:
+                        print(f"    [Gemini] 画像比較エラー: {e}")
+                        is_match = None
+
+                    if is_match is not True:
+                        continue  # MISMATCH or UNCERTAIN → スキップ
+                    gemini_matched += 1
+                    print(f"    [Gemini] 画像MATCH: 類似度{sim:.0%} '{title[:50]}...'")
 
                 # 価格取得
                 price_info = item.get("price", {})
@@ -671,8 +724,11 @@ class EbayClient:
                         "similarity": sim,
                     }
 
+            if gemini_checked > 0:
+                print(f"  [最安値検索] Gemini画像比較: {gemini_checked}件チェック → {gemini_matched}件MATCH")
+
             if not best_match:
-                print(f"  [最安値検索] 同一商品のアクティブリスティングなし（類似度50%未満: {skipped_low_sim}件）")
+                print(f"  [最安値検索] 同一商品のアクティブリスティングなし（類似度30%未満: {skipped_low_sim}件）")
                 return None
 
             print(f"  [最安値検索] 最安: ${best_match['total_price_usd']:.2f} (類似度{best_match['similarity']:.0%}) item={best_match['item_id']}")

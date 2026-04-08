@@ -2428,6 +2428,8 @@ def main():
     sourcing_cache: Dict[str, dict] = {}  # cache_key → {top_sources, search_method, original_title}
     # 画像ハッシュベース重複検出（タイトルが違っても同じ商品画像ならキャッシュヒット）
     image_hash_cache: Dict[str, str] = {}  # dhash → cache_key (sourcing_cacheのキー)
+    # 出力済み商品の画像URL（Gemini画像比較による重複検出用）
+    output_image_urls: List[tuple] = []  # [(image_url, ebay_title), ...]
 
     # SerpApiClientをキーワードループ外で1回だけ生成（クォータ枯渇フラグを保持するため）
     serpapi_client = SerpApiClient()
@@ -3977,6 +3979,33 @@ def main():
                         image_hash_cache[item_dhash] = no_source_key
                 continue
 
+            # === Gemini画像比較による出力前重複チェック ===
+            # タイトル類似度やdhashで検出できない同一商品（別タイトル/別写真）を排除
+            if image_url and output_image_urls and gemini_client:
+                is_output_dup = False
+                for prev_img_url, prev_title in output_image_urls:
+                    if not prev_img_url:
+                        continue
+                    try:
+                        dup_match = gemini_client.compare_product_images(
+                            ebay_image_url=prev_img_url,
+                            source_image_url=image_url,
+                            ebay_title=prev_title,
+                            source_title=ebay_title,
+                        )
+                        if dup_match is True:
+                            print(f"  [SKIP] Gemini画像重複検出: 出力済み商品と同一")
+                            print(f"    出力済み: {prev_title[:60]}...")
+                            print(f"    今回:     {ebay_title[:60]}...")
+                            is_output_dup = True
+                            break
+                    except Exception as e:
+                        print(f"  [WARN] Gemini重複チェック失敗: {e}")
+                if is_output_dup:
+                    skip_reasons["other"] += 1
+                    skipped_this_keyword += 1
+                    continue
+
             result_data = {
                 "keyword": keyword,
                 "ebay_url": ebay_url,
@@ -4011,6 +4040,9 @@ def main():
                 # 画像ハッシュも登録（同一画像の別出品を検出するため）
                 if item_dhash and not cache_hit:
                     image_hash_cache[item_dhash] = cache_key
+            # 出力済み画像URLを記録（Gemini画像重複チェック用）
+            if image_url:
+                output_image_urls.append((image_url, ebay_title))
 
             # 書き込んだeBay Item IDを処理済みに追加（最安値検索で同一リスティングへの重複書き込みを防止）
             written_item_id = re.search(r'/itm/(\d+)', ebay_url)

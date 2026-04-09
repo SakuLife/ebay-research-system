@@ -146,13 +146,22 @@ class PriceScraper:
                         in_stock=True, stock_status="unknown"
                     )
 
-                # 楽天市場: 価格が見つからない場合は売り切れとみなす
-                # （売り切れページでは価格表示が消えるパターンが多い）
-                print(f"    [Scrape] Rakuten: 価格なし → 売り切れの可能性大")
-                return ScrapedPrice(
-                    price=0, success=False, error_message="Out of stock (no price)",
-                    in_stock=False, stock_status="out_of_stock"
-                )
+                # 楽天市場: 価格が見つからない場合
+                # 明示的な在庫切れパターンがHTMLにあれば在庫切れ、なければ不明扱い
+                _, stock_status_check = self._check_rakuten_stock(html)
+                if stock_status_check == "out_of_stock":
+                    print(f"    [Scrape] Rakuten: 価格なし＋在庫切れパターン検出 → 売り切れ")
+                    return ScrapedPrice(
+                        price=0, success=False, error_message="Out of stock (no price + OOS pattern)",
+                        in_stock=False, stock_status="out_of_stock"
+                    )
+                else:
+                    # 在庫切れパターンなし → 価格取得失敗（JS等の可能性）
+                    print(f"    [Scrape] Rakuten: 価格なし（在庫切れパターンなし）→ Headlessフォールバック対象")
+                    return ScrapedPrice(
+                        price=0, success=False, error_message="Price not found (no OOS pattern)",
+                        in_stock=True, stock_status="unknown"
+                    )
 
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:
@@ -1256,11 +1265,12 @@ def scrape_price_with_fallback(url: str, current_price: float = 0) -> ScrapedPri
     if result.success and 100 <= result.price <= 10000000:
         return result
 
-    # 在庫切れの場合はHeadless不要
+    # 明示的な在庫切れ（HTMLに在庫切れパターンあり）はHeadless不要
     if not result.in_stock:
         return result
 
     # Headlessフォールバック（30秒タイムアウト付き）
+    # ※改善3により「価格なし＋在庫切れパターンなし」はin_stock=Trueで到達する
     print(f"    [Fallback] Trying headless browser...")
     headless_result_container: list = []
     headless_error_container: list = []
@@ -1285,5 +1295,13 @@ def scrape_price_with_fallback(url: str, current_price: float = 0) -> ScrapedPri
         if headless_result.success and headless_result.price > 0:
             return headless_result
 
-    # どちらも失敗した場合は元の結果を返す
+    # どちらも失敗した場合、API価格があれば在庫不明として価格を返す
+    # （スクレイプ失敗≠在庫切れ。JS依存ページ等の可能性がある）
+    if current_price > 0 and result.stock_status != "out_of_stock":
+        print(f"    [Fallback] スクレイプ失敗 → API価格 JPY {current_price:,.0f} を採用（在庫不明）")
+        return ScrapedPrice(
+            price=current_price, currency="JPY", source="API",
+            success=True, in_stock=True, stock_status="unknown"
+        )
+
     return result

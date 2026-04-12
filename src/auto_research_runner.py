@@ -3960,7 +3960,7 @@ def main():
 
             # 仕入先が取れなかった/在庫切れの場合はスプシに書かずスキップ
             # → 出力件数にカウントせず、次のeBay商品を試す
-            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG", "在庫切れ"]
+            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG", "在庫切れ", "仕入先URL重複"]
             if error_reason in skip_errors:
                 print(f"\n  [SKIP] Not writing to sheet: {error_reason}")
                 # スキップ理由別にカウント

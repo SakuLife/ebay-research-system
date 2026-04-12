@@ -591,13 +591,20 @@ class EbayClient:
         if country_code:
             filter_parts.append(f"itemLocationCountry:{country_code}")
 
-        # 検索クエリを最適化（タイトルが長すぎる場合は先頭部分を使用）
-        # Browse APIのqパラメータは長すぎると精度が下がる
-        search_query = ebay_title
-        if len(search_query) > 100:
-            # 先頭の重要な単語を残す（ブランド名+商品名程度）
-            words = search_query.split()
-            search_query = " ".join(words[:12])
+        # 検索クエリを最適化: ノイズワードを除去し、ブランド名+型番+商品名に絞る
+        # Browse APIのqパラメータは長すぎると精度が下がり、ノイズで関連性も低下する
+        noise_words = {
+            "new", "used", "brand", "free", "shipping", "ship", "from", "japan",
+            "japanese", "authentic", "genuine", "original", "official", "sealed",
+            "rare", "vintage", "limited", "edition", "oem", "nib", "nwt", "nwb",
+            "f/s", "fs", "mint", "box", "with", "and", "the", "for",
+        }
+        words = ebay_title.split()
+        filtered = [w for w in words if w.lower().strip("!.,()[]【】") not in noise_words]
+        search_query = " ".join(filtered) if filtered else ebay_title
+        # さらに長すぎる場合は先頭の重要な単語に絞る
+        if len(search_query) > 80:
+            search_query = " ".join(filtered[:10])
 
         params = {
             "q": search_query,

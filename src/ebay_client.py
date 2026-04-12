@@ -606,6 +606,27 @@ class EbayClient:
         if len(search_query) > 80:
             search_query = " ".join(filtered[:10])
 
+        # Geminiで商品特定に最適な短縮クエリも生成（候補が少ない場合の再検索用）
+        gemini_short_query = ""
+        if use_gemini_image and gemini_client and hasattr(gemini_client, 'model'):
+            try:
+                prompt = f'''eBayの商品タイトルから、同じ商品の別出品を検索するための最短キーワードを生成してください。
+
+ルール:
+- ブランド名 + 商品名/型番 のみ（5〜8語以内）
+- 数量・サイズ・状態説明・送料情報は除外
+- 英語のまま出力
+
+商品タイトル: {ebay_title}
+
+検索キーワード:'''
+                response = gemini_client.model.generate_content(prompt)
+                gemini_short_query = response.text.strip().split('\n')[0].strip()
+                if len(gemini_short_query) > 100 or len(gemini_short_query) < 5:
+                    gemini_short_query = ""
+            except Exception:
+                gemini_short_query = ""
+
         params = {
             "q": search_query,
             "sort": "price",  # 最安値順
@@ -631,6 +652,23 @@ class EbayClient:
 
             data = response.json()
             items = data.get("itemSummaries", [])
+
+            # 候補が少ない場合（5件以下）、Gemini短縮クエリで再検索して候補を追加
+            if len(items) <= 5 and gemini_short_query:
+                print(f"  [最安値検索] 候補{len(items)}件 → Gemini短縮クエリで再検索: '{gemini_short_query}'")
+                retry_params = {**params, "q": gemini_short_query}
+                try:
+                    retry_response = requests.get(url, headers=headers, params=retry_params, timeout=15)
+                    if retry_response.status_code == 200:
+                        retry_data = retry_response.json()
+                        retry_items = retry_data.get("itemSummaries", [])
+                        # 既存のitem IDと重複しないものを追加
+                        existing_ids = {item.get("itemId") for item in items}
+                        new_items = [i for i in retry_items if i.get("itemId") not in existing_ids]
+                        items.extend(new_items)
+                        print(f"  [最安値検索] Gemini再検索で{len(new_items)}件追加 → 合計{len(items)}件")
+                except Exception as e:
+                    print(f"  [最安値検索] Gemini再検索失敗: {e}")
 
             if not items:
                 print(f"  [最安値検索] アクティブリスティングなし")

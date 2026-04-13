@@ -2420,8 +2420,6 @@ def main():
         "other": 0,              # その他
     }
     keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
-    processed_source_urls: set[str] = set()  # 仕入先URL重複チェック用
-
     # === キーワード横断: 仕入先キャッシュ & 重複検出 ===
     # 同じeBay商品が別タイトル/別価格で出品されている場合に、仕入先検索を再利用する
     global_processed_titles: List[tuple] = []  # [(title, cache_key), ...]
@@ -3761,10 +3759,6 @@ def main():
             if best_source and needs_price_check:
                 print(f"\n[5/5] Skipping profit calculation (price confirmation needed)")
                 error_reason = "要価格確認"
-            elif best_source and best_source.source_url in processed_source_urls:
-                print(f"\n[5/5] Skipping (同一仕入先URL既出): {best_source.source_url[:80]}")
-                best_source = None
-                error_reason = "仕入先URL重複"
             elif best_source:
                 print(f"\n[5/5] Calculating profit...")
 
@@ -3853,9 +3847,6 @@ def main():
                     error_reason = f"計算エラー: {str(e)[:30]}"
 
                 print(f"  [INFO] Profit (no rebate): JPY {profit_no_rebate:.0f} ({profit_margin_no_rebate:.1f}%)")
-
-                # 仕入先URLを処理済みに登録（赤字でも同じURLの再計算を防止）
-                processed_source_urls.add(best_source.source_url)
 
                 # Check if profit meets minimum threshold
                 if min_profit_jpy is not None and profit_no_rebate < min_profit_jpy:
@@ -3960,7 +3951,7 @@ def main():
 
             # 仕入先が取れなかった/在庫切れの場合はスプシに書かずスキップ
             # → 出力件数にカウントせず、次のeBay商品を試す
-            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG", "在庫切れ", "仕入先URL重複"]
+            skip_errors = ["国内仕入先なし", "類似商品なし", "数量不一致", "Gemini検証NG", "在庫切れ"]
             if error_reason in skip_errors:
                 print(f"\n  [SKIP] Not writing to sheet: {error_reason}")
                 # スキップ理由別にカウント

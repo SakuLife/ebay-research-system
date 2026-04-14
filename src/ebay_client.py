@@ -606,6 +606,22 @@ class EbayClient:
         if len(search_query) > 80:
             search_query = " ".join(filtered[:10])
 
+        params = {
+            "q": search_query,
+            "sort": "price",  # 最安値順
+            "limit": 200,  # 最大200件取得（旧: 20件）
+            "filter": ",".join(filter_parts)
+        }
+
+        url = f"{self.browse_url}/item_summary/search"
+
+        # Gemini画像比較が利用可能か判定
+        use_gemini_image = (
+            gemini_client is not None
+            and ebay_image_url
+            and hasattr(gemini_client, 'compare_product_images')
+        )
+
         # Geminiで商品特定に最適な短縮クエリも生成（候補が少ない場合の再検索用）
         gemini_short_query = ""
         if use_gemini_image and gemini_client and hasattr(gemini_client, 'model'):
@@ -626,22 +642,6 @@ class EbayClient:
                     gemini_short_query = ""
             except Exception:
                 gemini_short_query = ""
-
-        params = {
-            "q": search_query,
-            "sort": "price",  # 最安値順
-            "limit": 200,  # 最大200件取得（旧: 20件）
-            "filter": ",".join(filter_parts)
-        }
-
-        url = f"{self.browse_url}/item_summary/search"
-
-        # Gemini画像比較が利用可能か判定
-        use_gemini_image = (
-            gemini_client is not None
-            and ebay_image_url
-            and hasattr(gemini_client, 'compare_product_images')
-        )
 
         try:
             response = requests.get(url, headers=headers, params=params, timeout=15)

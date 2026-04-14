@@ -394,6 +394,20 @@ class PriceScraper:
             if re.search(pattern, html, re.IGNORECASE):
                 return (False, "out_of_stock")
 
+        # メーカー取り寄せを示すパターン（在庫ありだが納期が長い）
+        backorder_patterns = [
+            "メーカー取り寄せ",
+            "お取り寄せ",
+            "取り寄せ商品",
+            "メーカーからの取り寄せ",
+            "通常.*日.*程度で発送",
+            "メーカー在庫確認",
+        ]
+
+        for pattern in backorder_patterns:
+            if re.search(pattern, html, re.IGNORECASE):
+                return (True, "backorder")
+
         # 在庫ありを示すパターン（確認用）
         in_stock_patterns = [
             "在庫あり",

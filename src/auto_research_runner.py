@@ -2232,12 +2232,20 @@ def write_result_to_spreadsheet(sheet_client, data: dict):
     row_data[21] = str(int(profit_margin_with_rebate)) if profit_margin_with_rebate not in ("", None) else ""  # V: 利益率%（還付あり）
 
     # ステータスとメモ（出品フラグは空）
+    source_stock = data.get("source_stock_status", "")
+    stock_note = ""
+    if source_stock == "backorder":
+        stock_note = "【取り寄せ品】"
+    elif source_stock == "unknown":
+        stock_note = "【在庫不明】"
+
     if data.get("error"):
         row_data[22] = "エラー"  # W: ステータス
-        row_data[24] = f"ERROR: {data.get('error')}"  # Y: メモ
+        row_data[24] = f"{stock_note}ERROR: {data.get('error')}" if stock_note else f"ERROR: {data.get('error')}"  # Y: メモ
     else:
         row_data[22] = "要確認"  # W: ステータス
-        row_data[24] = f"自動処理 {now_jst().strftime('%H:%M:%S')}"  # Y: メモ（日本時間）
+        memo = f"{stock_note}自動処理 {now_jst().strftime('%H:%M:%S')}" if stock_note else f"自動処理 {now_jst().strftime('%H:%M:%S')}"
+        row_data[24] = memo  # Y: メモ（日本時間）
     # X: 出品フラグは空（ユーザーが手動で入力）
 
     # insert_rowsで行を物理挿入 → テーブルが構造的に拡張される
@@ -3444,6 +3452,8 @@ def main():
                     stock_str = ""
                     if not src.in_stock:
                         stock_str = " [在庫切れ]"
+                    elif src.stock_status == "backorder":
+                        stock_str = " [取り寄せ]"
                     elif src.stock_status == "unknown":
                         stock_str = " [在庫不明]"
 
@@ -4025,6 +4035,9 @@ def main():
                     skipped_this_keyword += 1
                     continue
 
+            # 仕入先の在庫ステータスを取得（取り寄せ等の注意情報）
+            source_stock_status = getattr(best_source, 'stock_status', '') if best_source else ''
+
             result_data = {
                 "keyword": keyword,
                 "ebay_url": ebay_url,
@@ -4039,7 +4052,8 @@ def main():
                 "category_id": category_id,
                 "condition": condition,  # 新品中古（New/Used）
                 "sold_count": max(getattr(item, 'sold_signal', 0), min_sold),  # 最低でもmin_sold以上を表示
-                "error": error_reason  # エラー理由（None or 文字列）
+                "error": error_reason,  # エラー理由（None or 文字列）
+                "source_stock_status": source_stock_status,  # 仕入先在庫状態
             }
 
             row_num = write_result_to_spreadsheet(sheets_client, result_data)

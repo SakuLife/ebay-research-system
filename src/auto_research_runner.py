@@ -2926,17 +2926,45 @@ def main():
                     search_stats["rakuten"]["total_results"] += len(rakuten_offers)
                     print(f"    結果: {len(rakuten_offers)}件")
 
-                    # 0件で長いクエリの場合、Geminiで必須キーワードを抽出してリトライ
+                    # 0件の場合、段階的にキーワードを減らしてリトライ（楽天APIは無料）
                     if not rakuten_offers:
                         words = japanese_query.split()
+                        retry_queries: list[str] = []
+
+                        # Step A: Gemini必須KW（4語）
                         if len(words) > 4:
                             gemini_for_kw = GeminiClient()
                             if gemini_for_kw.is_enabled:
                                 short_query = gemini_for_kw.extract_essential_keywords(japanese_query, max_keywords=4)
                                 if short_query:
-                                    print(f"    [リトライ] Gemini必須KW: {short_query}")
-                                    rakuten_offers = rakuten_client.search_multiple(short_query, max_results=10)
-                                    print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
+                                    retry_queries.append(("Gemini必須KW", short_query))
+
+                        # Step B: Gemini必須KW（3語）
+                        if len(words) > 3:
+                            gemini_for_kw2 = GeminiClient()
+                            if gemini_for_kw2.is_enabled:
+                                short_query2 = gemini_for_kw2.extract_essential_keywords(japanese_query, max_keywords=3)
+                                if short_query2 and short_query2 not in [q for _, q in retry_queries]:
+                                    retry_queries.append(("Gemini必須KW(3語)", short_query2))
+
+                        # Step C: 先頭3語のみ（ブランド+商品名が多い）
+                        if len(words) >= 3:
+                            head3 = " ".join(words[:3])
+                            if head3 not in [q for _, q in retry_queries]:
+                                retry_queries.append(("先頭3語", head3))
+
+                        # Step D: 先頭2語のみ（最も広い検索）
+                        if len(words) >= 2:
+                            head2 = " ".join(words[:2])
+                            if head2 not in [q for _, q in retry_queries]:
+                                retry_queries.append(("先頭2語", head2))
+
+                        for retry_label, retry_q in retry_queries:
+                            print(f"    [リトライ] {retry_label}: {retry_q}")
+                            rakuten_offers = rakuten_client.search_multiple(retry_q, max_results=10)
+                            print(f"    [リトライ] 結果: {len(rakuten_offers)}件")
+                            if rakuten_offers:
+                                break
 
                     if rakuten_offers:
                         rakuten_sources = []

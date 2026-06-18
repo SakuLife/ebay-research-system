@@ -181,14 +181,16 @@ def _log_gemini_call(method: str, input_tokens: int, output_tokens: int):
 class GeminiClient:
     """Gemini APIを使って商品名を翻訳するクライアント."""
 
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         """
         Args:
             api_key: Gemini API key. If not provided, reads from GEMINI_API_KEY env var.
-            model_name: Model name to use.
+            model_name: Model name to use. If not provided, reads GEMINI_MODEL env var
+                (default: gemini-2.5-flash). 旧デフォルトの gemini-2.0-flash は廃止済み(404)。
         """
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        # 引数を明示指定したときのみ優先。未指定なら環境変数→現行モデルの順で解決。
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.is_enabled = bool(self.api_key) and GEMINI_AVAILABLE
 
         if not GEMINI_AVAILABLE:
@@ -904,10 +906,17 @@ DETAILS: [画像から読み取った詳細（1行）]
 タイトル: {source_title}
 
 【判定基準】
-- 同じ商品の同じバリエーション（色・柄・デザイン）→ MATCH
-- 同じブランド・シリーズだがデザイン/色/柄が違う → MISMATCH
+- 完全に同じ商品（同じバリエーション・同じセット内容）→ MATCH
+- 同じブランド・シリーズだがデザイン/色/柄/型番が違う → MISMATCH
+- 同じ商品名でもセット内容や同梱物が違う（例: "Book Only" vs "with Goods/特典/限定版" / "通常版" vs "豪華版"）→ MISMATCH
+- スケール・サイズ・容量が違う（例: 1/72 vs 1/100, S vs M）→ MISMATCH
+- 単品 vs 複数本セット → MISMATCH
 - 明らかに別商品 → MISMATCH
 - 画像が不鮮明で判定困難 → UNCERTAIN
+
+【判定のヒント】
+- タイトル中の "with Goods"/"特典付き"/"限定版"/"豪華版"/"Bundle"/"Set of N" は同梱物・セット内容の違いを示すことが多い → 慎重に判定
+- 価格が大幅に違う場合、別バリアントの可能性が高い
 
 【出力形式】
 RESULT: [MATCH/MISMATCH/UNCERTAIN]

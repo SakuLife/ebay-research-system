@@ -537,6 +537,7 @@ class EbayClient:
         condition: str = "New",
         gemini_client: Any = None,
         ebay_image_url: str = "",
+        exclude_item_id: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         売済み品のタイトルをベースに、同一商品の現在最安アクティブリスティングを検索.
@@ -554,6 +555,7 @@ class EbayClient:
             condition: 商品状態 ("New", "Used", None)
             gemini_client: Geminiクライアント（画像比較用、Noneなら従来のタイトル判定のみ）
             ebay_image_url: eBay商品の画像URL（Gemini画像比較用）
+            exclude_item_id: 除外する商品ID（分析中の出品自身の自己マッチ防止）
 
         Returns:
             Dict with cheapest active listing details, or None if not found
@@ -606,13 +608,6 @@ class EbayClient:
         if len(search_query) > 80:
             search_query = " ".join(filtered[:10])
 
-        params = {
-            "q": search_query,
-            "sort": "price",  # 最安値順
-            "limit": 200,  # 最大200件取得（旧: 20件）
-            "filter": ",".join(filter_parts)
-        }
-
         url = f"{self.browse_url}/item_summary/search"
 
         # Gemini画像比較が利用可能か判定
@@ -622,9 +617,9 @@ class EbayClient:
             and hasattr(gemini_client, 'compare_product_images')
         )
 
-        # Geminiで商品特定に最適な短縮クエリも生成（候補が少ない場合の再検索用）
+        # Geminiで商品特定に最適な短縮クエリも事前生成（毎回現行クエリと併用）
         gemini_short_query = ""
-        if use_gemini_image and gemini_client and hasattr(gemini_client, 'model'):
+        if gemini_client and hasattr(gemini_client, 'model') and getattr(gemini_client, 'model', None):
             try:
                 prompt = f'''eBayの商品タイトルから、同じ商品の別出品を検索するための最短キーワードを生成してください。
 
@@ -643,145 +638,214 @@ class EbayClient:
             except Exception:
                 gemini_short_query = ""
 
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=15)
+        def _do_search(q: str, with_location: bool) -> list[dict]:
+            fp = list(filter_parts)
+            if not with_location:
+                # itemLocationCountry除外（フォールバック用）
+                fp = [x for x in fp if not x.startswith("itemLocationCountry:")]
+            params = {
+                "q": q,
+                "sort": "price",
+                "limit": 200,
+                "filter": ",".join(fp),
+            }
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=15)
+                if resp.status_code != 200:
+                    print(f"  [最安値検索] Browse API error: HTTP {resp.status_code} (q={q[:40]!r})")
+                    return []
+                return resp.json().get("itemSummaries", [])
+            except requests.exceptions.RequestException as e:
+                print(f"  [最安値検索] Browse APIエラー: {e}")
+                return []
 
-            if response.status_code != 200:
-                print(f"  [最安値検索] Browse API error: HTTP {response.status_code}")
-                return None
+        # 現行クエリとGeminiクエリで二段検索 → プール統合
+        items_curr = _do_search(search_query, with_location=True)
+        items_gem = _do_search(gemini_short_query, with_location=True) if gemini_short_query else []
 
-            data = response.json()
-            items = data.get("itemSummaries", [])
+        seen_ids: set[str] = set()
+        items: list[dict] = []
+        for src in (items_curr, items_gem):
+            for it in src:
+                iid = it.get("itemId", "")
+                if iid and iid not in seen_ids:
+                    seen_ids.add(iid)
+                    items.append(it)
 
-            # 候補が少ない場合（5件以下）、Gemini短縮クエリで再検索して候補を追加
-            if len(items) <= 5 and gemini_short_query:
-                print(f"  [最安値検索] 候補{len(items)}件 → Gemini短縮クエリで再検索: '{gemini_short_query}'")
-                retry_params = {**params, "q": gemini_short_query}
-                try:
-                    retry_response = requests.get(url, headers=headers, params=retry_params, timeout=15)
-                    if retry_response.status_code == 200:
-                        retry_data = retry_response.json()
-                        retry_items = retry_data.get("itemSummaries", [])
-                        # 既存のitem IDと重複しないものを追加
-                        existing_ids = {item.get("itemId") for item in items}
-                        new_items = [i for i in retry_items if i.get("itemId") not in existing_ids]
-                        items.extend(new_items)
-                        print(f"  [最安値検索] Gemini再検索で{len(new_items)}件追加 → 合計{len(items)}件")
-                except Exception as e:
-                    print(f"  [最安値検索] Gemini再検索失敗: {e}")
+        used_location_fallback = False
+        # 0件フォールバック: 日本所在地フィルタを外して再検索
+        if not items and "itemLocationCountry:JP" in ",".join(filter_parts):
+            print(f"  [最安値検索] 日本所在地で0件 → 全所在地で再検索（フォールバック）")
+            used_location_fallback = True
+            items_curr = _do_search(search_query, with_location=False)
+            items_gem = _do_search(gemini_short_query, with_location=False) if gemini_short_query else []
+            for src in (items_curr, items_gem):
+                for it in src:
+                    iid = it.get("itemId", "")
+                    if iid and iid not in seen_ids:
+                        seen_ids.add(iid)
+                        items.append(it)
 
-            if not items:
-                print(f"  [最安値検索] アクティブリスティングなし")
-                return None
-
-            print(f"  [最安値検索] {len(items)}件の候補を検索 (Gemini画像比較: {'ON' if use_gemini_image else 'OFF'})")
-
-            # USD変換レート
-            usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0}
-
-            # タイトル類似度で同一商品を判定し、最安値を選択
-            # 閾値: 50%以上 → 即採用、30-50% → Gemini画像比較で判定
-            SIMILARITY_AUTO_ACCEPT = 0.50  # タイトルだけで同一商品と判定
-            SIMILARITY_IMAGE_CHECK = 0.30  # 画像比較の対象にする下限
-            ebay_title_lower = ebay_title.lower().strip()
-            best_match = None
-            skipped_low_sim = 0
-            gemini_checked = 0
-            gemini_matched = 0
-
-            for item in items:
-                title = item.get("title", "")
-                title_lower = title.lower().strip()
-
-                # タイトル類似度チェック
-                sim = SequenceMatcher(None, ebay_title_lower, title_lower).ratio()
-
-                # 類似度30%未満は明らかに別商品 → スキップ
-                if sim < SIMILARITY_IMAGE_CHECK:
-                    skipped_low_sim += 1
-                    continue
-
-                # 類似度30-50%: Gemini画像比較で同一商品判定
-                if sim < SIMILARITY_AUTO_ACCEPT:
-                    if not use_gemini_image:
-                        skipped_low_sim += 1
-                        continue  # Gemini未使用時は従来通り50%で足切り
-
-                    # 候補の画像URLを取得
-                    candidate_image = item.get("image", {}).get("imageUrl", "")
-                    if not candidate_image:
-                        # サムネイルURLもチェック
-                        candidate_image = item.get("thumbnailImages", [{}])[0].get("imageUrl", "") if item.get("thumbnailImages") else ""
-                    if not candidate_image:
-                        skipped_low_sim += 1
-                        continue
-
-                    # Gemini画像比較（APIコスト: 低）
-                    gemini_checked += 1
-                    try:
-                        is_match = gemini_client.compare_product_images(
-                            ebay_image_url=ebay_image_url,
-                            source_image_url=candidate_image,
-                            ebay_title=ebay_title,
-                            source_title=title,
-                        )
-                    except Exception as e:
-                        print(f"    [Gemini] 画像比較エラー: {e}")
-                        is_match = None
-
-                    if is_match is not True:
-                        continue  # MISMATCH or UNCERTAIN → スキップ
-                    gemini_matched += 1
-                    print(f"    [Gemini] 画像MATCH: 類似度{sim:.0%} '{title[:50]}...'")
-
-                # 価格取得
-                price_info = item.get("price", {})
-                price_local = float(price_info.get("value", 0))
-                currency = price_info.get("currency", "USD")
-                usd_rate = usd_rates.get(currency, 1.0)
-                price_usd = price_local * usd_rate
-
-                if price_usd <= 0:
-                    continue
-
-                # 送料取得
-                shipping_cost = 0.0
-                shipping_options = item.get("shippingOptions", [])
-                if shipping_options:
-                    shipping_info = shipping_options[0].get("shippingCost", {})
-                    shipping_cost = float(shipping_info.get("value", 0))
-
-                total_price_usd = price_usd + (shipping_cost * usd_rate)
-
-                item_url = item.get("itemWebUrl", "")
-                item_id = item.get("itemId", "")
-
-                if best_match is None or total_price_usd < best_match["total_price_usd"]:
-                    best_match = {
-                        "item_id": item_id,
-                        "title": title,
-                        "url": item_url,
-                        "price": price_usd,
-                        "price_local": price_local,
-                        "currency": currency,
-                        "shipping": shipping_cost,
-                        "total_price_usd": total_price_usd,
-                        "similarity": sim,
-                    }
-
-            if gemini_checked > 0:
-                print(f"  [最安値検索] Gemini画像比較: {gemini_checked}件チェック → {gemini_matched}件MATCH")
-
-            if not best_match:
-                print(f"  [最安値検索] 同一商品のアクティブリスティングなし（類似度30%未満: {skipped_low_sim}件）")
-                return None
-
-            print(f"  [最安値検索] 最安: ${best_match['total_price_usd']:.2f} (類似度{best_match['similarity']:.0%}) item={best_match['item_id']}")
-            return best_match
-
-        except requests.exceptions.RequestException as e:
-            print(f"  [最安値検索] Browse APIエラー: {e}")
+        if not items:
+            print(f"  [最安値検索] アクティブリスティングなし")
             return None
+
+        print(
+            f"  [最安値検索] {len(items)}件の候補 "
+            f"(現行Q:{len(items_curr)} GeminiQ:{len(items_gem)} 画像比較:{'ON' if use_gemini_image else 'OFF'}"
+            f"{' 所在地フォールバック' if used_location_fallback else ''})"
+        )
+
+        # USD変換レート（マーケット間比較用の概算。同一マーケット内では相対順位に影響しない）
+        usd_rates = {"GBP": 1.27, "EUR": 1.09, "USD": 1.0, "AUD": 0.66, "CAD": 0.73}
+
+        def _to_usd(value: float, currency: str) -> float:
+            return value * usd_rates.get(currency, 1.0)
+
+        # 類似度ゲート
+        # 90%以上かつ価格差が穏やか(20%以内) → タイトル一致で即採用（コスト削減）
+        # それ以外 → 安い順にGemini画像比較で同一商品判定（上位N件まで）
+        # 20%未満 → スキップ
+        # Geminiなし時は SIMILARITY_FALLBACK_ACCEPT 以上で採用
+        SIMILARITY_AUTO_ACCEPT = 0.90
+        SIMILARITY_FALLBACK_ACCEPT = 0.50  # Geminiなし時の足切り
+        SIMILARITY_IMAGE_CHECK = 0.20
+        # 価格が現価格(sold_price_usd)の70%未満（=30%以上安い）なら、別バリアント疑いで必ず画像確認
+        PRICE_GAP_VERIFY_RATIO = 0.70
+        MAX_GEMINI_CHECKS = 15  # 画像比較の上限（APIコスト制御）
+
+        ebay_title_lower = ebay_title.lower().strip()
+        # 自己マッチ防止用: Browse APIのitemIdは "v1|123456|0" 形式、除外IDは数値部分
+        exclude_id = exclude_item_id.strip()
+
+        # 各候補を「最安総額(本体+最安送料) + 採用時レコード」へ変換し、安い順にソート
+        # 送料はオプションのうち最安を採用し、各々の通貨でUSD換算する（本体通貨流用の誤換算を防ぐ）
+        candidates: list[dict] = []
+        skipped_self = 0
+        for item in items:
+            item_id = item.get("itemId", "")
+            if exclude_id and exclude_id in item_id:
+                skipped_self += 1
+                continue
+
+            title = item.get("title", "")
+            sim = SequenceMatcher(None, ebay_title_lower, title.lower().strip()).ratio()
+            if sim < SIMILARITY_IMAGE_CHECK:
+                continue
+
+            price_info = item.get("price", {})
+            price_local = float(price_info.get("value", 0) or 0)
+            currency = price_info.get("currency", "USD")
+            price_usd = _to_usd(price_local, currency)
+            if price_usd <= 0:
+                continue
+
+            # 送料: 複数オプションのうち最安をUSDで採用（無料/未掲載は0扱い）
+            ship_costs = []
+            for opt in item.get("shippingOptions", []) or []:
+                ci = opt.get("shippingCost", {}) or {}
+                val = ci.get("value")
+                if val is not None:
+                    ship_costs.append(_to_usd(float(val), ci.get("currency", currency)))
+            ship_usd = min(ship_costs) if ship_costs else 0.0
+            total_usd = price_usd + ship_usd
+
+            cand_img = item.get("image", {}).get("imageUrl", "")
+            if not cand_img:
+                thumbs = item.get("thumbnailImages", [])
+                cand_img = thumbs[0].get("imageUrl", "") if thumbs else ""
+
+            candidates.append({
+                "total_usd": total_usd,
+                "sim": sim,
+                "image": cand_img,
+                "title": title,
+                "result": {
+                    "item_id": item_id,
+                    "title": title,
+                    "url": item.get("itemWebUrl", ""),
+                    "price": price_usd,
+                    "price_local": price_local,
+                    "currency": currency,
+                    "shipping": ship_usd,
+                    "total_price_usd": total_usd,
+                    "similarity": sim,
+                },
+            })
+
+        candidates.sort(key=lambda c: c["total_usd"])  # 安い順
+
+        best_match: Optional[Dict[str, Any]] = None
+        gemini_checked = 0
+        gemini_matched = 0
+        adopted_without_gemini = 0
+
+        # 価格差判定の基準: sold_price_usd（呼び出し元の現価格）
+        # 0以下なら無効（全件Gemini確認の方向に倒す）
+        ref_price = sold_price_usd if sold_price_usd > 0 else 0.0
+
+        # 安い順に走査し、最初に「同一商品」と判定されたものを採用
+        for cand in candidates:
+            total_usd = cand["total_usd"]
+            sim = cand["sim"]
+            cand_img = cand["image"]
+            cand_title = cand["title"]
+
+            # 価格差が大きい候補は別バリアントの疑い → 類似度が高くても画像確認を強制
+            price_gap_large = ref_price > 0 and total_usd < ref_price * PRICE_GAP_VERIFY_RATIO
+
+            # ケース1: 類似度が極めて高い & 価格差が穏やか → 画像確認なしで即採用
+            if sim >= SIMILARITY_AUTO_ACCEPT and not price_gap_large:
+                best_match = cand["result"]
+                adopted_without_gemini = 1
+                break
+
+            # ケース2: Gemini画像比較が使えない → タイトル類似度フォールバック
+            if not use_gemini_image:
+                # 価格差が大きい候補は安全側に倒してスキップ
+                if price_gap_large:
+                    continue
+                if sim >= SIMILARITY_FALLBACK_ACCEPT:
+                    best_match = cand["result"]
+                    adopted_without_gemini = 1
+                    break
+                continue
+
+            # ケース3: Gemini画像比較で確認
+            if not cand_img:
+                continue
+            if gemini_checked >= MAX_GEMINI_CHECKS:
+                print(f"  [最安値検索] 画像比較上限{MAX_GEMINI_CHECKS}件に到達 → 中断")
+                break
+            gemini_checked += 1
+            try:
+                is_match = gemini_client.compare_product_images(
+                    ebay_image_url=ebay_image_url,
+                    source_image_url=cand_img,
+                    ebay_title=ebay_title,
+                    source_title=cand_title,
+                )
+            except Exception as e:
+                print(f"    [Gemini] 画像比較エラー: {e}")
+                continue
+            if is_match is not True:
+                continue
+            gemini_matched += 1
+            print(f"    [Gemini] 画像MATCH: ${total_usd:.2f} 類似度{sim:.0%} '{cand_title[:50]}'")
+            best_match = cand["result"]
+            break  # 安い順に走査しているので最初のMATCHが最安
+
+        if gemini_checked > 0:
+            print(f"  [最安値検索] Gemini画像比較: {gemini_checked}件チェック → {gemini_matched}件MATCH")
+        if adopted_without_gemini:
+            print(f"  [最安値検索] 高類似度({SIMILARITY_AUTO_ACCEPT:.0%}以上)のため画像比較スキップ")
+
+        if not best_match:
+            print(f"  [最安値検索] 同一商品のアクティブリスティングなし（候補{len(candidates)}件中マッチなし）")
+            return None
+
+        print(f"  [最安値検索] 最安: ${best_match['total_price_usd']:.2f} (類似度{best_match['similarity']:.0%}) item={best_match['item_id']}")
+        return best_match
 
     def create_and_publish_listing(self, request: ListingRequest) -> ListingResult:
         """Create and publish listing (not implemented yet)."""

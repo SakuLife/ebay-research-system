@@ -13,6 +13,146 @@ from urllib.parse import urlparse, parse_qs
 from .models import ListingCandidate, ListingRequest, ListingResult
 
 
+# ---------------------------------------------------------------------------
+# 同一商品判定のためのタイトル解析ヘルパー
+#
+# SequenceMatcher は長い商品タイトル同士の比較に弱く（語順違い・出品者独自の
+# 前置き・全角半角ゆれで一気に落ちる）、同一商品を別商品と判定して取りこぼす
+# 主因になっていた。文字bigramのDice係数＋型番トークン一致に置き換える。
+# ---------------------------------------------------------------------------
+
+# 商品の同一性に関係しない出品者側の常套句。比較前に落とす
+_TITLE_NOISE_WORDS = {
+    "new", "used", "brand", "free", "shipping", "ship", "shipped", "from",
+    "japan", "japanese", "authentic", "genuine", "original", "official",
+    "sealed", "rare", "vintage", "limited", "edition", "oem", "nib", "nwt",
+    "nwb", "fs", "mint", "box", "boxed", "with", "and", "the", "for", "in",
+    "excellent", "condition", "good", "very", "near", "unused", "tracking",
+    "number", "fast", "import", "us", "seller", "lot", "set", "of",
+}
+
+# 本体ではなく付属品・部品・説明書だけの出品を示す語。
+# これらを候補から外さないと、価格が安いため上位に並び、
+# 同一商品判定（Gemini画像比較）の回数を食い潰して本命に到達できない
+_ACCESSORY_MARKERS = (
+    "manual only", "instruction manual", "instructions only", "owners manual",
+    "user manual", "manual booklet", "box only", "empty box", "case only",
+    "bag only", "strap only", "cable only", "adapter only", "battery only",
+    "lid only", "part only", "parts only", "for parts", "not working",
+    "repair", "junk", "screen protector", "replacement part",
+    "取扱説明書", "説明書のみ", "箱のみ", "ジャンク", "部品取り",
+)
+
+
+def _normalize_title(title: str) -> str:
+    """比較用にタイトルを正規化する（小文字化・記号を空白化・空白圧縮）."""
+    lowered = title.lower()
+    cleaned = re.sub(r"[^0-9a-z぀-ヿ一-鿿]+", " ", lowered)
+    return " ".join(cleaned.split())
+
+
+def _content_tokens(title: str) -> set:
+    """商品の同一性に効くトークンだけ残す（ノイズ語と1文字を除去）."""
+    return {
+        t for t in _normalize_title(title).split()
+        if t not in _TITLE_NOISE_WORDS and len(t) > 1
+    }
+
+
+# 寸法・規格・容量を表す接尾辞。型番ではないので除外する。
+# 例: 52mm・210mm・70300mm（レンズ径やサイズ）を型番扱いすると、
+# 無関係な商品どうしが「型番一致」になって候補の優先順位が壊れる
+_MEASUREMENT_SUFFIXES = (
+    "mm", "cm", "inch", "in", "ft", "ml", "oz", "kg", "lb", "hz", "khz",
+    "mah", "gb", "tb", "mb", "cc", "mp", "fps", "rpm", "wh", "vdc",
+)
+
+
+def _model_tokens(title: str) -> set:
+    """型番らしいトークンを抜き出す.
+
+    英字と数字が混在する4文字以上のトークン（NS-TSC10 → nstsc10、F-91W → f91w）に加えて、
+    角括弧やシャープ付きの品番（[56809]・#241）も拾う。
+    型番が一致すれば同一商品である可能性が非常に高く、
+    タイトルの書き方が全く違っていても拾える強い手がかりになる。
+    """
+    tokens = set()
+    for raw in re.findall(r"[0-9a-zA-Z][0-9a-zA-Z\-/]{2,}", title.lower()):
+        flat = raw.replace("-", "").replace("/", "")
+        if len(flat) < 4:
+            continue
+        if not (any(c.isdigit() for c in flat) and any(c.isalpha() for c in flat)):
+            continue
+        # 数字＋単位だけのもの（52mm, 210mm）は寸法であって型番ではない
+        stripped = flat.rstrip("0123456789")
+        if not stripped and flat.isdigit():
+            continue
+        unit_part = flat.lstrip("0123456789")
+        if unit_part in _MEASUREMENT_SUFFIXES:
+            continue
+        tokens.add(flat)
+
+    # メーカー品番の慣用表記: [56809] / #241 / No.241
+    # プラモデル・フィギュア系はこの数字が唯一の識別子になることが多い
+    for code in re.findall(r"(?:\[|#|no\.?\s*)(\d{3,6})\b", title.lower()):
+        tokens.add(code)
+
+    return tokens
+
+
+def models_match(models_a: set, models_b: set) -> bool:
+    """型番集合どうしが同一商品を指すか判定する.
+
+    完全一致に加えて、末尾2文字以内の差（バリアント記号）は同一とみなす。
+    出品者は同じ商品を F-91W とも F91W-1 とも書くため、完全一致だけだと取りこぼす。
+    ⚠️ NS-TSC10 と NS-TSC100 のような別型番も拾いうるが、
+    型番一致は「候補に残す」判断にしか使わず、採否はGemini画像比較で決めるため許容する。
+    """
+    if not models_a or not models_b:
+        return False
+    for a in models_a:
+        for b in models_b:
+            if a == b:
+                return True
+            longer, shorter = (a, b) if len(a) >= len(b) else (b, a)
+            if len(longer) - len(shorter) <= 2 and longer.startswith(shorter):
+                return True
+    return False
+
+
+def _char_bigrams(text: str) -> set:
+    """文字bigram集合（空白除去後）."""
+    flat = text.replace(" ", "")
+    return {flat[i:i + 2] for i in range(len(flat) - 1)}
+
+
+def _dice(a: set, b: set) -> float:
+    """Dice係数. 集合が空なら0."""
+    if not a or not b:
+        return 0.0
+    return 2 * len(a & b) / (len(a) + len(b))
+
+
+def title_similarity(title_a: str, title_b: str) -> float:
+    """商品タイトルの類似度（0.0〜1.0）.
+
+    文字bigramのDice係数と、内容語トークンのDice係数の大きい方を採る。
+    語順が違うだけの同一商品を落とさないため、トークン側も見る。
+    """
+    norm_a, norm_b = _normalize_title(title_a), _normalize_title(title_b)
+    if not norm_a or not norm_b:
+        return 0.0
+    char_score = _dice(_char_bigrams(norm_a), _char_bigrams(norm_b))
+    token_score = _dice(_content_tokens(title_a), _content_tokens(title_b))
+    return max(char_score, token_score)
+
+
+def is_accessory_listing(title: str) -> bool:
+    """本体ではなく付属品・部品・説明書のみの出品か判定する."""
+    lowered = title.lower()
+    return any(marker in lowered for marker in _ACCESSORY_MARKERS)
+
+
 class EbayClient:
     """Real eBay API client using Browse API."""
 
@@ -560,8 +700,6 @@ class EbayClient:
         Returns:
             Dict with cheapest active listing details, or None if not found
         """
-        from difflib import SequenceMatcher
-
         token = self._get_access_token()
 
         marketplace_map = {
@@ -659,32 +797,47 @@ class EbayClient:
                 print(f"  [最安値検索] Browse APIエラー: {e}")
                 return []
 
-        # 現行クエリとGeminiクエリで二段検索 → プール統合
-        items_curr = _do_search(search_query, with_location=True)
-        items_gem = _do_search(gemini_short_query, with_location=True) if gemini_short_query else []
+        # 型番クエリ: 型番が一致する出品はタイトルの書き方が全く違っても同一商品なので、
+        # 型番だけで引くと現行クエリ・Geminiクエリの両方が取りこぼす候補を拾える
+        source_models = _model_tokens(ebay_title)
+        model_query = ""
+        if source_models:
+            # 元タイトル中の表記のまま（ハイフン込み）で引く方がヒットしやすい
+            raw_models = re.findall(r"[0-9a-zA-Z][0-9a-zA-Z\-/]{2,}", ebay_title)
+            for raw in raw_models:
+                if raw.replace("-", "").replace("/", "").lower() in source_models:
+                    model_query = raw
+                    break
 
         seen_ids: set[str] = set()
         items: list[dict] = []
-        for src in (items_curr, items_gem):
-            for it in src:
-                iid = it.get("itemId", "")
-                if iid and iid not in seen_ids:
-                    seen_ids.add(iid)
-                    items.append(it)
 
-        used_location_fallback = False
-        # 0件フォールバック: 日本所在地フィルタを外して再検索
-        if not items and "itemLocationCountry:JP" in ",".join(filter_parts):
-            print(f"  [最安値検索] 日本所在地で0件 → 全所在地で再検索（フォールバック）")
-            used_location_fallback = True
-            items_curr = _do_search(search_query, with_location=False)
-            items_gem = _do_search(gemini_short_query, with_location=False) if gemini_short_query else []
-            for src in (items_curr, items_gem):
+        def _collect(sources: list[list[dict]]) -> None:
+            for src in sources:
                 for it in src:
                     iid = it.get("itemId", "")
                     if iid and iid not in seen_ids:
                         seen_ids.add(iid)
                         items.append(it)
+
+        # 現行クエリ・Geminiクエリ・型番クエリの三段検索 → プール統合
+        items_curr = _do_search(search_query, with_location=True)
+        items_gem = _do_search(gemini_short_query, with_location=True) if gemini_short_query else []
+        items_model = _do_search(model_query, with_location=True) if model_query else []
+        _collect([items_curr, items_gem, items_model])
+
+        # 所在地フォールバック: 日本所在地の候補が乏しいときは全所在地でも引く。
+        # 0件のときだけ広げていたため、無関係な数件が混じると広げられず取りこぼしていた
+        MIN_POOL_BEFORE_WIDENING = 25
+        used_location_fallback = False
+        if len(items) < MIN_POOL_BEFORE_WIDENING and "itemLocationCountry:JP" in ",".join(filter_parts):
+            print(f"  [最安値検索] 日本所在地の候補{len(items)}件 → 全所在地でも検索（フォールバック）")
+            used_location_fallback = True
+            _collect([
+                _do_search(search_query, with_location=False),
+                _do_search(gemini_short_query, with_location=False) if gemini_short_query else [],
+                _do_search(model_query, with_location=False) if model_query else [],
+            ])
 
         if not items:
             print(f"  [最安値検索] アクティブリスティングなし")
@@ -692,7 +845,8 @@ class EbayClient:
 
         print(
             f"  [最安値検索] {len(items)}件の候補 "
-            f"(現行Q:{len(items_curr)} GeminiQ:{len(items_gem)} 画像比較:{'ON' if use_gemini_image else 'OFF'}"
+            f"(現行Q:{len(items_curr)} GeminiQ:{len(items_gem)} 型番Q:{len(items_model)}"
+            f" 画像比較:{'ON' if use_gemini_image else 'OFF'}"
             f"{' 所在地フォールバック' if used_location_fallback else ''})"
         )
 
@@ -707,14 +861,16 @@ class EbayClient:
         # それ以外 → 安い順にGemini画像比較で同一商品判定（上位N件まで）
         # 20%未満 → スキップ
         # Geminiなし時は SIMILARITY_FALLBACK_ACCEPT 以上で採用
-        SIMILARITY_AUTO_ACCEPT = 0.90
-        SIMILARITY_FALLBACK_ACCEPT = 0.50  # Geminiなし時の足切り
+        # しきい値は文字bigram Dice基準（旧SequenceMatcher基準より素直に上がる）
+        SIMILARITY_AUTO_ACCEPT = 0.85
+        SIMILARITY_FALLBACK_ACCEPT = 0.45  # Geminiなし時の足切り
         SIMILARITY_IMAGE_CHECK = 0.20
+        # 型番が一致していれば書き方が違っても同一商品の可能性が高いので、足切りを下げる
+        SIMILARITY_IMAGE_CHECK_WITH_MODEL = 0.10
+        SIMILARITY_FALLBACK_ACCEPT_WITH_MODEL = 0.35
         # 価格が現価格(sold_price_usd)の70%未満（=30%以上安い）なら、別バリアント疑いで必ず画像確認
         PRICE_GAP_VERIFY_RATIO = 0.70
-        MAX_GEMINI_CHECKS = 15  # 画像比較の上限（APIコスト制御）
-
-        ebay_title_lower = ebay_title.lower().strip()
+        MAX_GEMINI_CHECKS = 20  # 画像比較の上限（APIコスト制御）
         # 自己マッチ防止用: Browse APIのitemIdは "v1|123456|0" 形式、除外IDは数値部分
         exclude_id = exclude_item_id.strip()
 
@@ -722,6 +878,7 @@ class EbayClient:
         # 送料はオプションのうち最安を採用し、各々の通貨でUSD換算する（本体通貨流用の誤換算を防ぐ）
         candidates: list[dict] = []
         skipped_self = 0
+        skipped_accessory = 0
         for item in items:
             item_id = item.get("itemId", "")
             if exclude_id and exclude_id in item_id:
@@ -729,8 +886,18 @@ class EbayClient:
                 continue
 
             title = item.get("title", "")
-            sim = SequenceMatcher(None, ebay_title_lower, title.lower().strip()).ratio()
-            if sim < SIMILARITY_IMAGE_CHECK:
+
+            # 説明書のみ・箱のみ・部品取り等は本体ではないので候補から外す。
+            # 安価なため最安側に並び、画像比較の回数を食い潰して本命に届かなくなる
+            if is_accessory_listing(title):
+                skipped_accessory += 1
+                continue
+
+            sim = title_similarity(ebay_title, title)
+            # 型番一致は「書き方が違うだけの同一商品」を示す強い手がかり
+            model_match = models_match(source_models, _model_tokens(title))
+            gate = SIMILARITY_IMAGE_CHECK_WITH_MODEL if model_match else SIMILARITY_IMAGE_CHECK
+            if sim < gate:
                 continue
 
             price_info = item.get("price", {})
@@ -758,6 +925,7 @@ class EbayClient:
             candidates.append({
                 "total_usd": total_usd,
                 "sim": sim,
+                "model_match": model_match,
                 "image": cand_img,
                 "title": title,
                 "result": {
@@ -773,7 +941,27 @@ class EbayClient:
                 },
             })
 
-        candidates.sort(key=lambda c: c["total_usd"])  # 安い順
+        # 走査順の決め方（ここを間違えると打率が落ちる）
+        #
+        # 単純な「安い順」だと、型番クエリで広がった候補プールの中の
+        # 無関係な安物（互換アクセサリ・別バリアント）が先頭に並び、
+        # Gemini画像比較の回数上限を食い潰して本命に到達できない。
+        # 実測でも、プールを広げただけの版は打率が 63%→53% に低下した。
+        #
+        # そこで「もっともらしさ上位K件」に絞ってから、その中を安い順に見る。
+        # 絞り込みで精度を、K件内の安い順で「最安を採る」目的を両立させる。
+        PLAUSIBLE_POOL_SIZE = 40
+
+        def _plausibility(c: dict) -> float:
+            # 型番一致は強い手がかりなので加点する
+            return c["sim"] + (0.25 if c["model_match"] else 0.0)
+
+        candidates.sort(key=_plausibility, reverse=True)
+        pruned = len(candidates) - PLAUSIBLE_POOL_SIZE
+        candidates = candidates[:PLAUSIBLE_POOL_SIZE]
+        candidates.sort(key=lambda c: c["total_usd"])  # 絞った中で安い順
+        if pruned > 0:
+            print(f"  [最安値検索] もっともらしさ上位{PLAUSIBLE_POOL_SIZE}件に絞り込み（{pruned}件を除外）")
 
         best_match: Optional[Dict[str, Any]] = None
         gemini_checked = 0
@@ -802,10 +990,15 @@ class EbayClient:
 
             # ケース2: Gemini画像比較が使えない → タイトル類似度フォールバック
             if not use_gemini_image:
-                # 価格差が大きい候補は安全側に倒してスキップ
-                if price_gap_large:
+                # 価格差が大きい候補は安全側に倒してスキップ（型番一致なら別バリアントの
+                # 疑いが薄いので、そのまま類似度で判断する）
+                if price_gap_large and not cand["model_match"]:
                     continue
-                if sim >= SIMILARITY_FALLBACK_ACCEPT:
+                accept = (
+                    SIMILARITY_FALLBACK_ACCEPT_WITH_MODEL if cand["model_match"]
+                    else SIMILARITY_FALLBACK_ACCEPT
+                )
+                if sim >= accept:
                     best_match = cand["result"]
                     adopted_without_gemini = 1
                     break
@@ -839,6 +1032,9 @@ class EbayClient:
             print(f"  [最安値検索] Gemini画像比較: {gemini_checked}件チェック → {gemini_matched}件MATCH")
         if adopted_without_gemini:
             print(f"  [最安値検索] 高類似度({SIMILARITY_AUTO_ACCEPT:.0%}以上)のため画像比較スキップ")
+
+        if skipped_accessory:
+            print(f"  [最安値検索] 付属品・部品のみの出品を除外: {skipped_accessory}件")
 
         if not best_match:
             print(f"  [最安値検索] 同一商品のアクティブリスティングなし（候補{len(candidates)}件中マッチなし）")

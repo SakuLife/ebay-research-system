@@ -103,7 +103,9 @@ GitHub Actions Runner (src/github_actions_runner.py):
             eBay価格・送料・URLを最安出品に差し替えて以降の計算に使用
           - GEMINI_API_KEY があれば画像比較で同一商品判定、無ければタイトル類似度のみ
           - 差し替えた場合はメモ欄（Y列）に「最安値検索: $旧→$新に差替」と記録
-  [2/5] Generate Japanese search query (Gemini API - TODO)
+  [2/5] Generate Japanese search query (Gemini translate_product_name・2026-07-28実装)
+        - 英語タイトルのまま楽天/Amazonを叩くと日本語商品名に当たらず0件になるため
+        - Gemini無効時は英語タイトルのまま（0件になりやすい旨を警告表示）
   [3/5] Search domestic sources (Rakuten + Amazon PA-API)
   [4/5] Calculate profit (Python fallback)
   [4.5/5] Write to 検索ベース sheet → Read calculation results
@@ -181,11 +183,18 @@ else:
 
 ### Status Updates
 
+入力シートの実ヘッダーは **W=ステータス / X=出品フラグ / Y=メモ**（A〜Yの25列）。
+2026-07-28 まで `update_status()` は V（利益率%（還付あり））と X（出品フラグ）に書いており、
+途中でエラー終了すると利益率欄と出品フラグを汚染していた（W/Yへ修正済み）。
+
 ```python
-# Update status column (AF) and log column (AH)
+# Update status column (W) and memo column (Y)
 update_status(sheets_client, row_number=5, status="処理中...", log="Started processing")
 update_status(sheets_client, row_number=5, status="要確認", log="Completed successfully")
 ```
+
+行の既存データ判定（`is_row_occupied`）は **`update_status` より前に呼ぶ**こと。
+後で判定すると自分が書いたステータスを「既存データ」と誤検知し、毎回上書き警告が出る。
 
 ### eBay API Error Handling
 
@@ -229,9 +238,10 @@ AMAZON_MARKETPLACE=JP
 GOOGLE_SERVICE_ACCOUNT_JSON=path/to/service-account.json
 SHEETS_SPREADSHEET_ID=https://docs.google.com/spreadsheets/d/xxx
 
-# Gemini API (TODO: not yet implemented)
+# Gemini API（翻訳・画像比較で使用）
 GEMINI_API_KEY=xxx
-GEMINI_MODEL=gemini-2.5-flash
+# バージョン直書きは提供終了で404になる（2.0-flash→2.5-flashと2度踏んだ）。-latestは現行世代に自動追従
+GEMINI_MODEL=gemini-flash-latest
 ```
 
 ## Critical Implementation Details
@@ -274,9 +284,23 @@ print(f"Price: JPY {price}")
 
 - eBay production API requires separate credentials from Sandbox
 - Short URLs (ebay.us/m/xxx) may hit redirect loops in Sandbox
-- Gemini translation not yet implemented (uses hardcoded Japanese queries)
 - GitHub Actions has 10-minute timeout per job
 - Google Sheets API has rate limits (100 requests per 100 seconds per user)
+
+### 2026-07-28 実測で判明した稼働状況（本番APIで確認）
+
+| 依存先 | 状態 | 備考 |
+|---|---|---|
+| GitHubリポジトリ | **アーカイブ済み＝読み取り専用** | push 403。GitHub Actions も動かないので**ローカル実行のみ** |
+| eBay Browse API | 稼働 | 商品取得・最安値検索とも正常 |
+| Gemini | 稼働 | ただし `.env` の `GEMINI_MODEL` が `gemini-2.5-flash` のままで404だった → `gemini-flash-latest` に修正 |
+| Google Sheets | 稼働 | `.env` の service account パスが旧フォルダ名 `ebaySystem` を指していた → `0_ebaySystem` に修正 |
+| 楽天 API | **503（メンテナンス中）** | 一時的。復旧すれば動く |
+| Amazon PA-API | **403（恒久）** | `Your account does not currently meet the eligibility requirements` ＝アソシエイトの売上実績条件を満たすまで使用不可 |
+| Yahoo!ショッピング | 未設定 | `YAHOO_APP_ID` を入れれば3つ目の仕入先として使える |
+
+⚠️ **仕入先が楽天503・Amazon403・Yahoo未設定で全滅のため、現状はeBay側だけ取れて利益計算まで到達しない**
+（`No sourcing results` でエラー行になる）。最安値検索そのものは正常動作している。
 
 ## Deployment
 

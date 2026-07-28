@@ -27,16 +27,21 @@ def get_last_row(sheet_client) -> int:
 
 
 def update_status(sheet_client, row_number: int, status: str, log: str = ""):
-    """Update status column only."""
+    """Update status column only.
+
+    列は入力シートのヘッダーに合わせる（W=ステータス, Y=メモ）。
+    2026-07-28まで V(利益率%（還付あり）)・X(出品フラグ) に書いており、
+    途中でエラー終了すると利益率欄と出品フラグを汚染していた。
+    """
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
 
-    # Update V column (status) - column 22
-    status_cell = f"V{row_number}"
+    # Update W column (ステータス) - column 23
+    status_cell = f"W{row_number}"
     worksheet.update(range_name=status_cell, values=[[status]])
 
-    # Update X column (memo) if provided - column 24
+    # Update Y column (メモ) if provided - column 25
     if log:
-        memo_cell = f"X{row_number}"
+        memo_cell = f"Y{row_number}"
         current_memo = worksheet.acell(memo_cell).value or ""
         new_memo = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {log}"
         if current_memo:
@@ -46,18 +51,29 @@ def update_status(sheet_client, row_number: int, status: str, log: str = ""):
     print(f"  [STATUS] Row {row_number}: {status}")
 
 
-def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
+def is_row_occupied(sheet_client, row_number: int) -> bool:
+    """指定行に既存データがあるか判定する（処理開始前に呼ぶこと）.
+
+    処理中にステータス列を書いた後で判定すると自分が書いた値を
+    「既存データ」と誤検知するため、判定は必ずupdate_statusより前に行う。
+    """
+    worksheet = sheet_client.spreadsheet.worksheet("入力シート")
+    try:
+        existing_data = worksheet.row_values(row_number)
+        return bool(existing_data) and any(cell.strip() for cell in existing_data)
+    except Exception as e:
+        # 行がまだ存在しない場合など。空とみなして進める
+        print(f"  [INFO] Row {row_number} occupancy check skipped: {e}")
+        return False
+
+
+def write_to_spreadsheet(sheet_client, row_number: int, data: dict, was_occupied: bool = False):
     """Write research results to spreadsheet."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
 
-    # Check if the specified row is empty
-    try:
-        existing_data = worksheet.row_values(row_number)
-        if existing_data and any(cell.strip() for cell in existing_data):
-            print(f"  [WARNING] Row {row_number} already contains data!")
-            print(f"  [WARNING] Existing data will be overwritten.")
-    except Exception:
-        pass  # Row doesn't exist yet, which is fine
+    if was_occupied:
+        print(f"  [WARNING] Row {row_number} already contains data!")
+        print(f"  [WARNING] Existing data will be overwritten.")
 
     # Prepare row data (A〜Y列：25列固定)
     row_data = [""] * 25
@@ -168,6 +184,9 @@ def main():
     if args.row <= last_row and last_row > 1:
         print(f"[WARNING] Row {args.row} may already contain data (last row is {last_row})")
         print(f"[INFO] Consider using row {last_row + 1} for new data")
+
+    # 既存データの有無は、自分がステータスを書き込む前に判定する
+    row_was_occupied = is_row_occupied(sheets_client, args.row)
 
     result_data = {
         "ebay_url": args.ebay_url,
@@ -287,15 +306,17 @@ def main():
         # あれば eBay側の販売価格・送料・URL を最安出品に差し替える
         # （Auto Research側と同じ find_cheapest_active_listing を流用）
         ebay_url = args.ebay_url
+
+        # Geminiクライアントは Step 1.5（画像比較）と Step 2（翻訳）で共用
+        from .gemini_client import GeminiClient
+        gemini_client = GeminiClient()
+        if not gemini_client.is_enabled:
+            # キー未設定時はNone扱い（Step1.5はタイトル類似度のみ、Step2は英語のまま）
+            gemini_client = None
+
         if not is_mock_data:
             print(f"\n[1.5/5] eBay最安アクティブリスティングを検索中...")
             try:
-                from .gemini_client import GeminiClient
-                gemini_client = GeminiClient()
-                if not gemini_client.is_enabled:
-                    # キー未設定時はNoneを渡し、タイトル類似度のみで同一商品判定
-                    gemini_client = None
-
                 cheapest = ebay_client.find_cheapest_active_listing(
                     ebay_title=ebay_title,
                     sold_price_usd=ebay_price,
@@ -330,9 +351,19 @@ def main():
                 print(f"  [WARN] 最安値検索失敗: {e} → 貼り付けURLの価格を使用")
 
         # Step 2: Generate search query (translate to Japanese)
+        # 英語タイトルのまま楽天/Amazonを叩くと日本語の商品名に当たらず0件になるため、
+        # Geminiで日本語キーワードに変換してから国内検索に渡す（2026-07-28）
         print(f"\n[2/5] Generating search query...")
-        # TODO: Implement Gemini translation - for now use eBay title
         search_query = ebay_title
+        if gemini_client:
+            japanese_query = gemini_client.translate_product_name(ebay_title)
+            if japanese_query:
+                search_query = japanese_query
+                print(f"  [Gemini] 翻訳: {ebay_title[:50]} → {search_query}")
+            else:
+                print(f"  [WARN] 翻訳失敗 → 英語タイトルで検索")
+        else:
+            print(f"  [WARN] Gemini無効 → 英語タイトルで検索（国内0件になりやすい）")
         print(f"  Query: {search_query}")
 
         result_data["keyword"] = ebay_title
@@ -435,7 +466,7 @@ def main():
 
         # Step 5: Write to spreadsheet
         print(f"\n[5/5] 入力シートに書き込み...")
-        write_to_spreadsheet(sheets_client, args.row, result_data)
+        write_to_spreadsheet(sheets_client, args.row, result_data, was_occupied=row_was_occupied)
 
         print(f"\n{'='*60}")
         print(f"COMPLETED SUCCESSFULLY")
@@ -456,7 +487,7 @@ def main():
             result_data["error"] = str(e)
             result_data["profit_no_rebate"] = 0
             result_data["profit_margin_no_rebate"] = 0
-            write_to_spreadsheet(sheets_client, args.row, result_data)
+            write_to_spreadsheet(sheets_client, args.row, result_data, was_occupied=row_was_occupied)
         except Exception as write_error:
             print(f"Failed to write error to spreadsheet: {write_error}")
             # Try to at least update status

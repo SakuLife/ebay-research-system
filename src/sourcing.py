@@ -14,6 +14,30 @@ import requests
 from .models import ListingCandidate, SourceOffer
 
 
+def _describe_request_error(exc: requests.RequestException) -> str:
+    """API失敗の理由を1行で説明する（HTTPコードとAPI側のメッセージを含める）.
+
+    「0件」と「障害で取れなかった」を取り違えないための表示用。
+    """
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return f"{type(exc).__name__}: {exc}"
+
+    detail = ""
+    try:
+        body = resp.json()
+        # 楽天は error/error_description、Amazon PA-API は Errors[].Message
+        detail = str(
+            body.get("error_description")
+            or body.get("error")
+            or (body.get("Errors") or [{}])[0].get("Message", "")
+        )
+    except ValueError:
+        detail = resp.text[:120]
+
+    return f"HTTP {resp.status_code}{' - ' + detail if detail else ''}"
+
+
 class SourcingClient:
     def __init__(self) -> None:
         self.rakuten = RakutenClient(
@@ -214,7 +238,9 @@ class RakutenClient:
             )
             resp.raise_for_status()
             data = resp.json()
-        except requests.RequestException:
+        except requests.RequestException as e:
+            # 握り潰すと障害が「0件」に化けて原因不明になる（楽天は503メンテを出す）
+            print(f"    [楽天] API失敗: {_describe_request_error(e)}")
             return None
 
         items = data.get("Items", [])
@@ -270,7 +296,9 @@ class RakutenClient:
             )
             resp.raise_for_status()
             data = resp.json()
-        except requests.RequestException:
+        except requests.RequestException as e:
+            # 握り潰すと障害が「0件」に化けて原因不明になる（楽天は503メンテを出す）
+            print(f"    [楽天] API失敗: {_describe_request_error(e)}")
             return []
 
         items = data.get("Items", [])
@@ -419,7 +447,9 @@ class AmazonPaapiClient:
             resp = requests.post(endpoint, data=payload_json, headers=headers, timeout=20)
             resp.raise_for_status()
             data = resp.json()
-        except requests.RequestException:
+        except requests.RequestException as e:
+            # 握り潰すと障害が「0件」に化けて原因不明になる（PA-APIは429/401を返す）
+            print(f"    [Amazon] API失敗: {_describe_request_error(e)}")
             return None
 
         items = data.get("SearchResult", {}).get("Items", [])
@@ -470,8 +500,10 @@ class AmazonPaapiClient:
             resp = requests.post(endpoint, data=payload_json, headers=headers, timeout=20)
             resp.raise_for_status()
             data = resp.json()
-        except requests.RequestException:
-            return []  # Silent failure
+        except requests.RequestException as e:
+            # 握り潰すと障害が「0件」に化けて原因不明になる（PA-APIは429/401を返す）
+            print(f"    [Amazon] API失敗: {_describe_request_error(e)}")
+            return []
 
         items = data.get("SearchResult", {}).get("Items", [])
 

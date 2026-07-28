@@ -45,6 +45,8 @@ class SourcingClient:
             affiliate_id=os.getenv("RAKUTEN_AFFILIATE_ID"),
             # 2026年のAPI刷新で必須になった。未設定なら楽天は自動的に無効化される
             access_key=os.getenv("RAKUTEN_ACCESS_KEY"),
+            # アプリ登録時の Allowed websites と一致させること
+            referer=os.getenv("RAKUTEN_REFERER"),
         )
         self.amazon = AmazonPaapiClient(
             access_key=os.getenv("AMAZON_ACCESS_KEY_ID"),
@@ -198,6 +200,18 @@ class MockSourcingClient(SourcingClient):
 RAKUTEN_API_BASE = "https://openapi.rakuten.co.jp/ichibams/api"
 RAKUTEN_ICHIBA_VERSION = "20260701"
 
+# Referer の扱い（2026-07-29 実測。ネット上の記事とは挙動が違うので注意）
+#   ヘッダー無し                    → accessKey の検証まで進む（Refererは必須ではない）
+#   自分のドメイン                  → 同上。素通りする
+#   webservice.rakuten.co.jp を名乗る → 403 "Access from this IP address is not allowed"
+#                                      ＝楽天所有ドメインを騙るとIP許可リストで弾かれる
+#   localhost                       → 503 "Authentication service error"
+# よって既定では Referer を送らない。アプリ登録の Allowed websites の設定によって
+# HTTP_REFERRER_MISSING / NOT_ALLOWED が出た場合のみ RAKUTEN_REFERER で指定する。
+# ⚠️ 楽天のドメイン（rakuten.co.jp 等）を入れてはいけない。アプリ登録フォームの
+#    プレースホルダにその例が薄字で出ているが、真似るとIP制限に当たる。
+RAKUTEN_DEFAULT_REFERER = ""
+
 
 class RakutenClient:
     def __init__(
@@ -205,10 +219,13 @@ class RakutenClient:
         application_id: Optional[str],
         affiliate_id: Optional[str],
         access_key: Optional[str] = None,
+        referer: Optional[str] = None,
     ) -> None:
         self.application_id = application_id
         self.affiliate_id = affiliate_id
         self.access_key = access_key
+        # 既定は空（送らない）。必要な場合のみ Allowed websites と一致する値を入れる
+        self.referer = referer if referer is not None else RAKUTEN_DEFAULT_REFERER
         # accessKey が無いと新APIは 400 を返すため、両方揃って初めて有効とする
         self.is_enabled = bool(self.application_id) and bool(self.access_key)
 
@@ -222,6 +239,13 @@ class RakutenClient:
     @property
     def search_url(self) -> str:
         return f"{RAKUTEN_API_BASE}/IchibaItem/Search/{RAKUTEN_ICHIBA_VERSION}"
+
+    @property
+    def request_headers(self) -> Dict[str, str]:
+        """Referer検査用のヘッダー（未指定なら送らない）."""
+        if not self.referer:
+            return {}
+        return {"Referer": self.referer, "Origin": self.referer.rstrip("/")}
 
     def _build_params(self, keyword: str, hits: int) -> Dict[str, str]:
         """新API仕様の共通パラメータを組み立てる."""
@@ -297,6 +321,7 @@ class RakutenClient:
             resp = requests.get(
                 self.search_url,
                 params=self._build_params(keyword, hits=5),
+                headers=self.request_headers,
                 timeout=15,
             )
             resp.raise_for_status()
@@ -348,6 +373,7 @@ class RakutenClient:
                 self.search_url,
                 # Rakuten API max is 30
                 params=self._build_params(keyword, hits=min(max_results, 30)),
+                headers=self.request_headers,
                 timeout=15,
             )
             resp.raise_for_status()

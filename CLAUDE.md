@@ -381,6 +381,25 @@ python tests/bench_cheapest_hitrate.py --run               # 打率を測る
 ⚠️ 全API（Ichiba/Books/Genre/Product）が一律で「メンテナンス中」と返すため、
 **一時障害に見えて何日も待ってしまう**。この文言を見たら移行を疑うこと。
 
+**アプリの新規作成が必要**（旧プラットフォームのアプリは新管理画面に出てこない）。
+作成フォームの `Allowed websites` は「ここに登録したサイトからのリクエストのみ許可」という
+新しい制限。⚠️ **フォームに薄字で出ている例（`rakuten.co.jp` / `webservice.rakuten.co.jp` /
+`*.rakuten.com`）をそのまま入れてはいけない**。楽天所有ドメインを名乗ると
+`403 Access from this IP address is not allowed` でIP許可リストに弾かれる。
+
+Referer の実挙動（2026-07-29 実測。ネット記事の説明とは異なる）:
+
+| 送る Referer | 結果 |
+|---|---|
+| ヘッダー無し | accessKey の検証まで進む（**Refererは必須ではない**） |
+| 自分のドメイン | 同上。素通りする |
+| `webservice.rakuten.co.jp` | **403 IP許可リスト違反** |
+| `localhost` | **503 Authentication service error** |
+
+＝ **本当の関門は accessKey**。よってコードは既定でRefererを送らない。
+`HTTP_REFERRER_MISSING` / `NOT_ALLOWED` が出たときだけ `RAKUTEN_REFERER` に
+Allowed websites と一致する値を設定する。
+
 対応: `RAKUTEN_ACCESS_KEY` を楽天ウェブサービスのアプリ管理画面から取得して `.env` に設定する。
 未設定の間は `RakutenClient.is_enabled` が False になり、警告を出して自動的にSerpApiへ回る。
 **新版レスポンスの形状（`Items[].Item` の入れ子が残っているか）は accessKey 取得後に実データで要確認**

@@ -355,10 +355,36 @@ python tests/bench_cheapest_hitrate.py --run               # 打率を測る
 | eBay Browse API | 稼働 | 商品取得・最安値検索とも正常 |
 | Gemini | 稼働 | ただし `.env` の `GEMINI_MODEL` が `gemini-2.5-flash` のままで404だった → `gemini-flash-latest` に修正 |
 | Google Sheets | 稼働 | `.env` の service account パスが旧フォルダ名 `ebaySystem` を指していた → `0_ebaySystem` に修正 |
-| 楽天 API | **503（メンテナンス中）** | 一時的。復旧すれば動く |
+| 楽天 API | **要移行**（下記） | 旧エンドポイント廃止。`RAKUTEN_ACCESS_KEY` の取得で復活する |
 | Amazon PA-API | **403（恒久）** | `Your account does not currently meet the eligibility requirements` ＝アソシエイトの売上実績条件を満たすまで使用不可 |
 | Yahoo!ショッピング | 未設定 | `YAHOO_APP_ID` を入れれば3つ目の仕入先として使える |
 | SerpApi (Google Shopping) | 稼働（フォールバック） | 直APIが全滅した時のみ使う。**有料・無料枠100回/月** |
+
+### ⚠️ 楽天APIの503は「メンテ待ち」ではない（2026-07-29 判明）
+
+旧エンドポイントは **`503 service_unavailable / "under maintenance"`** を返すが、
+これは一時的な障害ではなく**2026年のインフラ刷新で旧基盤が廃止された結果**。
+待っても永久に復旧しない。移行しないと直らない。
+
+| | 旧（廃止） | 新 |
+|---|---|---|
+| エンドポイント | `app.rakuten.co.jp/services/api/IchibaItem/Search/20170706` | `openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701` |
+| パス | `/services/api/` | **`/ichibams/api/`**（ドメインだけでなくパスも変わる） |
+| 認証 | `applicationId` のみ | `applicationId` ＋ **`accessKey`** |
+
+**切り分け方**（アプリID起因か基盤廃止かの判定）:
+- 旧エンドポイントに**無効な**applicationIdを投げると `400 wrong_parameter`、
+  有効なIDだと `503 under maintenance` → **IDは生きていて基盤側が死んでいる**証拠
+- 新エンドポイントに applicationId だけ投げると
+  `400 accessKey must be present` → **エンドポイントは生きており、足りないのは accessKey だけ**
+
+⚠️ 全API（Ichiba/Books/Genre/Product）が一律で「メンテナンス中」と返すため、
+**一時障害に見えて何日も待ってしまう**。この文言を見たら移行を疑うこと。
+
+対応: `RAKUTEN_ACCESS_KEY` を楽天ウェブサービスのアプリ管理画面から取得して `.env` に設定する。
+未設定の間は `RakutenClient.is_enabled` が False になり、警告を出して自動的にSerpApiへ回る。
+**新版レスポンスの形状（`Items[].Item` の入れ子が残っているか）は accessKey 取得後に実データで要確認**
+（`_unwrap()` で両形式に対応済みだが未検証）。
 
 直APIが楽天503・Amazon403・Yahoo未設定で全滅したため、**`search_multiple_offers` に
 SerpApi(Google Shopping)のフォールバックを追加**した（2026-07-28）。通常時は課金しないよう

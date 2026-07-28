@@ -43,6 +43,8 @@ class SourcingClient:
         self.rakuten = RakutenClient(
             application_id=os.getenv("RAKUTEN_APPLICATION_ID"),
             affiliate_id=os.getenv("RAKUTEN_AFFILIATE_ID"),
+            # 2026年のAPI刷新で必須になった。未設定なら楽天は自動的に無効化される
+            access_key=os.getenv("RAKUTEN_ACCESS_KEY"),
         )
         self.amazon = AmazonPaapiClient(
             access_key=os.getenv("AMAZON_ACCESS_KEY_ID"),
@@ -186,11 +188,64 @@ class MockSourcingClient(SourcingClient):
         )
 
 
+# 楽天ウェブサービスは2026年にインフラ刷新され、旧エンドポイントは廃止された。
+#   旧: https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706
+#   新: https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701
+# ドメインだけでなくパス（/services/api/ → /ichibams/api/）とバージョンも変わり、
+# 認証は applicationId に加えて accessKey が必須になった。
+# 旧エンドポイントは全API一律で 503 "under maintenance" を返すため、
+# 「一時的な障害」に見えるが実際は移行しないと永久に復旧しない（2026-07-29 実測）。
+RAKUTEN_API_BASE = "https://openapi.rakuten.co.jp/ichibams/api"
+RAKUTEN_ICHIBA_VERSION = "20260701"
+
+
 class RakutenClient:
-    def __init__(self, application_id: Optional[str], affiliate_id: Optional[str]) -> None:
+    def __init__(
+        self,
+        application_id: Optional[str],
+        affiliate_id: Optional[str],
+        access_key: Optional[str] = None,
+    ) -> None:
         self.application_id = application_id
         self.affiliate_id = affiliate_id
-        self.is_enabled = bool(self.application_id)
+        self.access_key = access_key
+        # accessKey が無いと新APIは 400 を返すため、両方揃って初めて有効とする
+        self.is_enabled = bool(self.application_id) and bool(self.access_key)
+
+        if self.application_id and not self.access_key:
+            print(
+                "  [楽天] RAKUTEN_ACCESS_KEY が未設定のため無効化しました。"
+                "2026年のAPI刷新で accessKey が必須になっています "
+                "（楽天ウェブサービスのアプリ管理画面から取得）"
+            )
+
+    @property
+    def search_url(self) -> str:
+        return f"{RAKUTEN_API_BASE}/IchibaItem/Search/{RAKUTEN_ICHIBA_VERSION}"
+
+    def _build_params(self, keyword: str, hits: int) -> Dict[str, str]:
+        """新API仕様の共通パラメータを組み立てる."""
+        params: Dict[str, str] = {
+            "applicationId": self.application_id,
+            "accessKey": self.access_key,
+            "keyword": keyword,
+            "hits": str(hits),
+            "format": "json",
+        }
+        if self.affiliate_id:
+            params["affiliateId"] = self.affiliate_id
+        return params
+
+    @staticmethod
+    def _unwrap(entry: Dict) -> Dict:
+        """商品1件を取り出す.
+
+        旧仕様は {"Item": {...}} の入れ子、新仕様は平坦。
+        どちらでも読めるようにしておく（新版のレスポンス形状は
+        accessKey取得後に実データで要確認）。
+        """
+        inner = entry.get("Item")
+        return inner if isinstance(inner, dict) else entry
 
     @staticmethod
     def _is_used_item(item_name: str, shop_name: str = "") -> bool:
@@ -238,24 +293,16 @@ class RakutenClient:
     def search(self, keyword: str) -> Optional[SourceOffer]:
         if not self.is_enabled:
             return None
-        params: Dict[str, str] = {
-            "applicationId": self.application_id,
-            "keyword": keyword,
-            "hits": "5",
-            "format": "json",
-        }
-        if self.affiliate_id:
-            params["affiliateId"] = self.affiliate_id
         try:
             resp = requests.get(
-                "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706",
-                params=params,
+                self.search_url,
+                params=self._build_params(keyword, hits=5),
                 timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as e:
-            # 握り潰すと障害が「0件」に化けて原因不明になる（楽天は503メンテを出す）
+            # 握り潰すと障害が「0件」に化けて原因不明になる
             print(f"    [楽天] API失敗: {_describe_request_error(e)}")
             return None
 
@@ -266,14 +313,14 @@ class RakutenClient:
         new_items = [
             i for i in items
             if not self._is_used_item(
-                i.get("Item", {}).get("itemName", ""),
-                i.get("Item", {}).get("shopName", ""),
+                self._unwrap(i).get("itemName", ""),
+                self._unwrap(i).get("shopName", ""),
             )
         ]
         if not new_items:
             return None
-        best = min(new_items, key=lambda i: i.get("Item", {}).get("itemPrice", 10**12))
-        item = best.get("Item", {})
+        best = min(new_items, key=lambda i: self._unwrap(i).get("itemPrice", 10**12))
+        item = self._unwrap(best)
         price = float(item.get("itemPrice", 0))
         url = item.get("itemUrl", "")
         availability = item.get("availability", 0)
@@ -296,24 +343,17 @@ class RakutenClient:
         """Search for multiple offers from Rakuten, sorted by price."""
         if not self.is_enabled:
             return []
-        params: Dict[str, str] = {
-            "applicationId": self.application_id,
-            "keyword": keyword,
-            "hits": str(min(max_results, 30)),  # Rakuten API max is 30
-            "format": "json",
-        }
-        if self.affiliate_id:
-            params["affiliateId"] = self.affiliate_id
         try:
             resp = requests.get(
-                "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706",
-                params=params,
+                self.search_url,
+                # Rakuten API max is 30
+                params=self._build_params(keyword, hits=min(max_results, 30)),
                 timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as e:
-            # 握り潰すと障害が「0件」に化けて原因不明になる（楽天は503メンテを出す）
+            # 握り潰すと障害が「0件」に化けて原因不明になる
             print(f"    [楽天] API失敗: {_describe_request_error(e)}")
             return []
 
@@ -325,7 +365,7 @@ class RakutenClient:
         offers = []
         used_excluded = 0
         for item_wrapper in items:
-            item = item_wrapper.get("Item", {})
+            item = self._unwrap(item_wrapper)
             item_name = item.get("itemName", "")
             shop_name = item.get("shopName", "")
 

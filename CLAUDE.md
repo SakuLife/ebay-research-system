@@ -242,6 +242,13 @@ SHEETS_SPREADSHEET_ID=https://docs.google.com/spreadsheets/d/xxx
 GEMINI_API_KEY=xxx
 # バージョン直書きは提供終了で404になる（2.0-flash→2.5-flashと2度踏んだ）。-latestは現行世代に自動追従
 GEMINI_MODEL=gemini-flash-latest
+
+# SerpApi（Google Shopping。直APIが全滅した時のフォールバック仕入先）
+# ⚠️ 変数名は SERP_API_KEY で統一。SERPAPI_API_KEY と書くと読まれず無効になる
+SERP_API_KEY=xxx
+
+# Yahoo!ショッピング（任意。3つ目の仕入先）
+YAHOO_APP_ID=xxx
 ```
 
 ## Critical Implementation Details
@@ -298,9 +305,17 @@ print(f"Price: JPY {price}")
 | 楽天 API | **503（メンテナンス中）** | 一時的。復旧すれば動く |
 | Amazon PA-API | **403（恒久）** | `Your account does not currently meet the eligibility requirements` ＝アソシエイトの売上実績条件を満たすまで使用不可 |
 | Yahoo!ショッピング | 未設定 | `YAHOO_APP_ID` を入れれば3つ目の仕入先として使える |
+| SerpApi (Google Shopping) | 稼働（フォールバック） | 直APIが全滅した時のみ使う。**有料・無料枠100回/月** |
 
-⚠️ **仕入先が楽天503・Amazon403・Yahoo未設定で全滅のため、現状はeBay側だけ取れて利益計算まで到達しない**
-（`No sourcing results` でエラー行になる）。最安値検索そのものは正常動作している。
+直APIが楽天503・Amazon403・Yahoo未設定で全滅したため、**`search_multiple_offers` に
+SerpApi(Google Shopping)のフォールバックを追加**した（2026-07-28）。通常時は課金しないよう
+**直APIが0件のときだけ**呼ぶ。Google Shoppingはメルカリ等のC2C中古が最安に並ぶので、
+楽天と同じ `_is_used_item()` で中古を除外してから採用する（除外しないと新品前提の
+利益計算が非現実的な数字になる）。
+
+**2026-07-28 の実走結果（行668）**: eBay $400.99 → 最安$135.99に差替（類似度89%・Gemini画像MATCH）、
+国内最安 楽天市場 ¥10,091 → 検索ベースシート計算で **還付抜き利益 ¥6,373（29.0%）/ 還付あり ¥7,107（32.0%）**、
+配送 CPaSS_Economy。1行のみ書き込み・隣接行は無傷。
 
 ## Deployment
 

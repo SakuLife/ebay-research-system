@@ -393,6 +393,9 @@ def main():
             for idx, offer in enumerate(offers, 1):
                 print(f"  #{idx}: {offer.source_site} - JPY {offer.source_price_jpy:,.0f}")
                 result_data["sourcing_results"].append({
+                    # write_to_spreadsheet は "name" を F/I/L列（商品名）に書く。
+                    # "site" だけ入れていたため商品名列が常に空だった（2026-07-28修正）
+                    "name": offer.source_site,
                     "site": offer.source_site,
                     "url": offer.source_url,
                     "price": offer.source_price_jpy,

@@ -54,7 +54,9 @@ class SourcingClient:
             app_id=os.getenv("YAHOO_APP_ID"),
         )
         self.serpapi = SerpApiClient(
-            api_key=os.getenv("SERPAPI_API_KEY"),
+            # 環境変数名は SERP_API_KEY で全社統一（serpapi_client.py・workflow・.envと一致）。
+            # ここだけ SERPAPI_API_KEY を読んでおり、SerpApi経路が恒久的に無効だった（2026-07-28修正）
+            api_key=os.getenv("SERP_API_KEY"),
         )
 
     # Expose individual clients for direct access
@@ -122,6 +124,17 @@ class SourcingClient:
             offers.extend(yahoo_offers)
         else:
             print(f"  [DEBUG] Yahoo!ショッピング検索: 無効（APIキー未設定）")
+
+        # 直APIが全滅したときだけSerpApi(Google Shopping)で代替検索する。
+        # SerpApiは有料（無料枠100回/月）なので、通常時は課金しないようフォールバック限定。
+        # 2026-07-28時点: 楽天=503メンテ / Amazon PA-API=403（資格要件未達）で直APIが取れない
+        if not offers and self.serpapi.is_enabled:
+            print(f"  [DEBUG] 直APIが0件 → SerpApi(Google Shopping)でフォールバック検索")
+            serp_offers = self.serpapi.search_google_shopping(
+                listing.search_query, max_results=max_results * 2
+            )
+            print(f"  [DEBUG] SerpApi検索結果: {len(serp_offers)}件")
+            offers.extend(serp_offers)
 
         # Sort by total price (price + shipping) and return top N
         if not offers:
@@ -206,6 +219,9 @@ class RakutenClient:
             "ゲオ", "geo", "セカンドストリート", "2ndstreet",
             "トレジャーファクトリー", "コメ兵", "komehyo",
             "まんだらけ", "mandarake", "駿河屋", "suruga-ya",
+            # 個人間取引（C2C）＝原則中古。新品前提の利益計算に混ぜると数字が嘘になる
+            "メルカリ", "mercari", "ヤフオク", "ラクマ", "rakuma",
+            "paypayフリマ", "ジモティー",
         ]
 
         for kw in used_keywords:
@@ -687,7 +703,15 @@ class SerpApiClient:
             return []
 
         offers = []
+        used_excluded = 0
         for item in shopping_results:
+            # 中古を除外（楽天クライアントと同じ判定を流用）。
+            # Google Shoppingはメルカリ等のC2C中古が最安に並ぶため、
+            # 除外しないと新品前提の利益計算が非現実的な数字になる
+            if RakutenClient._is_used_item(item.get("title", ""), item.get("source", "")):
+                used_excluded += 1
+                continue
+
             # Extract price (format: "1,234円" or "$12.34")
             price_str = item.get("extracted_price", 0)
             if isinstance(price_str, str):
@@ -700,7 +724,9 @@ class SerpApiClient:
             else:
                 price = float(price_str) if price_str else 0
 
-            link = item.get("link", "")
+            # SerpApiのgoogle_shoppingは link を返さなくなり product_link に変わった。
+            # link 必須のままだと全件スキップして「0件」に見える（2026-07-28修正）
+            link = item.get("link") or item.get("product_link") or ""
             source = item.get("source", "Unknown")
 
             if price > 0 and link:
@@ -711,6 +737,9 @@ class SerpApiClient:
                     source_shipping_jpy=0.0,
                     stock_hint="unknown",
                 ))
+
+        if used_excluded > 0:
+            print(f"    [SerpApi] 中古品除外: {used_excluded}件")
 
         # Sort by price
         offers.sort(key=lambda o: o.source_price_jpy)

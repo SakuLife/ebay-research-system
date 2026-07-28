@@ -97,6 +97,12 @@ Google Apps Script triggers GitHub Actions (repository_dispatch)
   ↓
 GitHub Actions Runner (src/github_actions_runner.py):
   [1/5] Fetch eBay item info (eBay Browse API)
+  [1.5/5] Find cheapest active listing of the same product (2026-07-28追加)
+          - Auto Research側の find_cheapest_active_listing() を流用
+          - 同一商品でより安い出品（送料込み総額）が見つかれば
+            eBay価格・送料・URLを最安出品に差し替えて以降の計算に使用
+          - GEMINI_API_KEY があれば画像比較で同一商品判定、無ければタイトル類似度のみ
+          - 差し替えた場合はメモ欄（Y列）に「最安値検索: $旧→$新に差替」と記録
   [2/5] Generate Japanese search query (Gemini API - TODO)
   [3/5] Search domestic sources (Rakuten + Amazon PA-API)
   [4/5] Calculate profit (Python fallback)
@@ -114,6 +120,9 @@ Completion notification to user
 - Entry point for GitHub Actions
 - Handles status updates in column AF
 - Falls back to Python calculations if sheet calculations fail
+- ⚠️ この手動パイプライン用ワークフロー（research.yml / Pattern①）は 2026-01-11 に
+  「Pattern②へ置き換え」で削除済み。現在は `python -m src.github_actions_runner` の
+  ローカル実行のみ可能（GASボタン→repository_dispatch の経路は復活させないと動かない）
 
 **src/search_base_client.py**: 検索ベース sheet interface
 - `write_input_data()`: Writes to B10, C10, D10, F10, G-I10, K9 (preserving formats)

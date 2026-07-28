@@ -99,7 +99,11 @@ def write_to_spreadsheet(sheet_client, row_number: int, data: dict):
         row_data[24] = f"ERROR: {data.get('error')}"  # Y: メモ
     else:
         row_data[22] = "要確認"  # W: ステータス
-        row_data[24] = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"  # Y: メモ
+        memo = f"自動処理 {datetime.now().strftime('%H:%M:%S')}"
+        if data.get("note"):
+            # 最安値検索での価格差し替え等の補足情報
+            memo += f" | {data['note']}"
+        row_data[24] = memo  # Y: メモ
     # X: 出品フラグは空（ユーザーが手動で入力）
 
     # Write to specific row (A〜Y列：25列のみ。はみ出し防止)
@@ -177,6 +181,7 @@ def main():
         # Step 1: Get eBay item info
         print(f"\n[1/5] Fetching eBay item info...")
 
+        is_mock_data = False
         try:
             ebay_item = ebay_client.get_item_by_url(args.ebay_url)
 
@@ -234,6 +239,11 @@ def main():
                         elif weight_unit in ["oz", "ounce", "ounces"]:
                             weight_kg = float(weight_value) * 0.0283495
 
+            # 最安値検索（Step 1.5）用の情報を抽出
+            ebay_image_url = ebay_item.get("image", {}).get("imageUrl", "")
+            ebay_condition = ebay_item.get("condition", "")
+            ebay_legacy_id = str(ebay_item.get("legacyItemId", "") or "")
+
             print(f"  Title: {ebay_title}")
             print(f"  Price: ${ebay_price}")
             print(f"  Shipping: ${ebay_shipping}")
@@ -257,6 +267,10 @@ def main():
                 category_name = "Video Games > Consoles"
                 category_id = "139971"
                 weight_kg = 0.4  # Nintendo Switchの実重量約400g
+                ebay_image_url = ""
+                ebay_condition = "New"
+                ebay_legacy_id = ""
+                is_mock_data = True  # モック時はStep 1.5（最安値検索）をスキップ
                 print(f"  Title: {ebay_title}")
                 print(f"  Price: ${ebay_price}")
                 print(f"  Shipping: ${ebay_shipping}")
@@ -267,6 +281,53 @@ def main():
                 print(f"  [ERROR] {error_msg}")
                 update_status(sheets_client, args.row, "エラー", error_msg)
                 return
+
+        # Step 1.5: 同一商品の最安アクティブリスティングを検索
+        # 貼られたURLの価格をそのまま使わず、同一商品でより安い出品が
+        # あれば eBay側の販売価格・送料・URL を最安出品に差し替える
+        # （Auto Research側と同じ find_cheapest_active_listing を流用）
+        ebay_url = args.ebay_url
+        if not is_mock_data:
+            print(f"\n[1.5/5] eBay最安アクティブリスティングを検索中...")
+            try:
+                from .gemini_client import GeminiClient
+                gemini_client = GeminiClient()
+                if not gemini_client.is_enabled:
+                    # キー未設定時はNoneを渡し、タイトル類似度のみで同一商品判定
+                    gemini_client = None
+
+                cheapest = ebay_client.find_cheapest_active_listing(
+                    ebay_title=ebay_title,
+                    sold_price_usd=ebay_price,
+                    market="US",  # 手動パイプラインはEBAY_USで商品取得しているため
+                    item_location="japan",
+                    condition=ebay_condition,
+                    gemini_client=gemini_client,
+                    ebay_image_url=ebay_image_url,
+                    exclude_item_id=ebay_legacy_id,
+                )
+
+                original_total = ebay_price + ebay_shipping
+                if cheapest and cheapest["total_price_usd"] < original_total - 0.01:
+                    print(f"  [最安値検索] より安い同一商品の出品を発見!")
+                    print(f"    旧: ${ebay_price:.2f} + 送料${ebay_shipping:.2f}"
+                          f" → 新: ${cheapest['price']:.2f} + 送料${cheapest['shipping']:.2f}"
+                          f" (類似度{cheapest['similarity']:.0%})")
+                    result_data["note"] = (
+                        f"最安値検索: ${ebay_price:.2f}→${cheapest['price']:.2f}に差替"
+                        f"(類似度{cheapest['similarity']:.0%})"
+                    )
+                    ebay_price = cheapest["price"]
+                    ebay_shipping = cheapest["shipping"]
+                    ebay_url = cheapest["url"]
+                    result_data["ebay_url"] = ebay_url
+                elif cheapest:
+                    print(f"  [最安値検索] 貼り付けURLが最安"
+                          f"（候補の最安総額: ${cheapest['total_price_usd']:.2f}）")
+                else:
+                    print(f"  [最安値検索] 同一商品の他出品なし → 貼り付けURLの価格を使用")
+            except Exception as e:
+                print(f"  [WARN] 最安値検索失敗: {e} → 貼り付けURLの価格を使用")
 
         # Step 2: Generate search query (translate to Japanese)
         print(f"\n[2/5] Generating search query...")
@@ -287,7 +348,7 @@ def main():
         listing = ListingCandidate(
             candidate_id=f"ROW-{args.row}",
             search_query=search_query,
-            ebay_item_url=args.ebay_url,
+            ebay_item_url=ebay_url,  # 最安値検索で差し替え済みの場合あり
             ebay_price=ebay_price,
             ebay_shipping=ebay_shipping,
             sold_signal=0
@@ -337,7 +398,7 @@ def main():
                 source_price_jpy=cheapest_offer.source_price_jpy,
                 ebay_price_usd=ebay_price,
                 ebay_shipping_usd=ebay_shipping,
-                ebay_url=args.ebay_url,
+                ebay_url=ebay_url,  # 最安値検索で差し替え済みの場合あり
                 weight_g=weight_g
             )
 

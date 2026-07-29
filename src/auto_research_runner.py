@@ -3837,8 +3837,11 @@ def main():
                     else:
                         # Gemini検証失敗（APIエラー等）→ 要確認としてマーク
                         gemini_stats["validate_error"] += 1
-                        print(f"    [WARN] Gemini検証失敗 → 要確認")
-                        error_reason = "要確認: Gemini検証失敗"
+                        detail = getattr(gemini_validator, "last_error", "") or "原因不明"
+                        print(f"    [WARN] Gemini検証失敗 → 要確認: {detail}")
+                        # 理由をシートにも残す。クラウドでしか再現しない不具合を
+                        # 実行ログを見ずに切り分けられるようにするため
+                        error_reason = f"要確認: Gemini検証失敗({detail[:60]})"
 
             # === 在庫確認: 非大手ECサイトの場合のみ ===
             # Amazon/楽天/Yahooはスクレイピング時に在庫確認済み

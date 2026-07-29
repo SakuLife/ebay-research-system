@@ -198,6 +198,8 @@ class GeminiClient:
         # 引数を明示指定したときのみ優先。未指定なら環境変数→現行モデルの順で解決。
         self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-flash-latest")
         self.is_enabled = bool(self.api_key) and GEMINI_AVAILABLE
+        # 直近の失敗理由（呼び出し元がシートに残せるようにする）
+        self.last_error = ""
 
         if not GEMINI_AVAILABLE:
             print("  [WARN] Gemini library not installed. Run: pip install google-generativeai")
@@ -685,9 +687,15 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
             response = self._generate(prompt)
             result = response.text.strip()
             _log_gemini_call("validate", len(prompt) // 4, len(result) // 4)
+            self.last_error = ""
             return self._parse_validation_result(result)
         except Exception as e:
-            print(f"  [WARN] Gemini validation failed: {e}")
+            # 失敗の理由を呼び出し元へ伝える。
+            # 以前はここで理由が消え、シートには「Gemini検証失敗」としか
+            # 残らなかったため、キー不正なのかレート制限なのか判別できなかった
+            # （2026-07-29、クラウドだけで再現する不具合の切り分けに難儀した）
+            self.last_error = f"{type(e).__name__}: {e}"[:120]
+            print(f"  [WARN] Gemini validation failed: {self.last_error}")
             return None
 
     def _parse_validation_result(self, text: str) -> Optional['SourceValidationResult']:

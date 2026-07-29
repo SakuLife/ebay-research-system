@@ -44,6 +44,10 @@ jobs:
           # 楽天 API
           RAKUTEN_APPLICATION_ID: ${{ secrets.RAKUTEN_APPLICATION_ID }}
           RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+          # 2026年のAPI刷新で必須になった。未設定だと楽天が丸ごと無効化される
+          RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
+          # アプリ登録の Allowed websites と一致させること（未設定だと403）
+          RAKUTEN_REFERER: ${{ secrets.RAKUTEN_REFERER }}
 
           # Amazon PA-API
           AMAZON_ACCESS_KEY_ID: ${{ secrets.AMAZON_ACCESS_KEY_ID }}
@@ -59,10 +63,13 @@ jobs:
 
           # Gemini API
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.5-flash
+          # バージョン直書きは提供終了で404になる（2.0-flash→2.5-flashと2度踏んだ）。-latestは現行世代に自動追従
+          GEMINI_MODEL: gemini-flash-latest
 
           # SerpAPI (Google Lens / Google Shopping / eBay Sold)
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
+          # SerpApiをいつ呼ぶか。smart=利益に余裕がある商品は省いてクレジット節約
+          SOURCING_SERPAPI_MODE: smart
 
           # Mock settings
           USE_MOCKS: ${{ secrets.USE_MOCKS }}

@@ -70,6 +70,8 @@ jobs:
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
           # SerpApiをいつ呼ぶか。smart=利益に余裕がある商品は省いてクレジット節約
           SOURCING_SERPAPI_MODE: smart
+          # 1キーワードで試す商品数の上限（収穫のないキーワードで課金し続けないための安全弁）
+          MAX_ITEMS_PER_KEYWORD: 40
 
           # Mock settings
           USE_MOCKS: ${{ secrets.USE_MOCKS }}

@@ -2590,10 +2590,26 @@ def main():
         page1_count = len(active_items)  # 1ページ目の件数
         item_loop_idx = 0         # ループカウンタ
 
+        # 1キーワードで有料APIを使い切らないための安全弁。
+        # 「検索商品数」は"出力する件数"の目標なので、1件も出力できないキーワードだと
+        # 目標に到達せず、最大4ページ×商品数ぶん延々と探索してクレジットを食い続ける。
+        # 実測（2026-07-29「Iron man」）: 出力0件のまま90商品を処理し35クレジット消費。
+        # 客が効かないキーワードを10個並べると、それだけで月のクォータが飛ぶ。
+        max_attempts_this_keyword = int(os.getenv("MAX_ITEMS_PER_KEYWORD", "40"))
+        attempts_this_keyword = 0
+
         for item in active_items:
             # 出力目標に達したら終了
             if items_output_this_keyword >= items_per_keyword:
                 break
+
+            # 収穫がないキーワードで延々と課金しないための打ち切り
+            if attempts_this_keyword >= max_attempts_this_keyword:
+                print(f"\n  [打ち切り] {attempts_this_keyword}商品を試して出力"
+                      f"{items_output_this_keyword}件 → このキーワードは相性が悪いと判断し中断"
+                      f"（上限 MAX_ITEMS_PER_KEYWORD={max_attempts_this_keyword}）")
+                break
+            attempts_this_keyword += 1
 
             # タイムアウトチェック（アイテムループ先頭）
             elapsed = time.time() - pipeline_start_time

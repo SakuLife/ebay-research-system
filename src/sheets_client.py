@@ -13,6 +13,62 @@ from google.oauth2.service_account import Credentials
 from .models import CandidateRow, ListedRow
 
 
+def extend_table_formatting(sheet_client, sheet_name: str = "入力シート") -> None:
+    """縞模様（bandedRange）と条件付き書式を、シートの全行まで広げる.
+
+    行を追加しただけでは新しい行に表の書式が付かず、見た目が
+    「テーブルから外れた」状態になる（縞模様が途切れ、色分けも効かない）。
+    書式の適用範囲は行追加に追従しないため、明示的に広げる必要がある。
+
+    2026-07-29に実際に発生: 縞模様が670行目、条件付き書式が669行目までで
+    切れており、671行目以降に書いた結果が表から浮いて見えていた。
+
+    何度呼んでも安全（既に足りていれば何もしない）。
+    """
+    spreadsheet = sheet_client.spreadsheet
+    meta = spreadsheet.fetch_sheet_metadata()
+    target = next(
+        (s for s in meta["sheets"] if s["properties"]["title"] == sheet_name), None
+    )
+    if not target:
+        return
+
+    sheet_id = target["properties"]["sheetId"]
+    row_count = target["properties"]["gridProperties"]["rowCount"]
+    requests: List[dict] = []
+
+    for banded in target.get("bandedRanges", []):
+        rng = dict(banded["range"])
+        if rng.get("endRowIndex") is None or rng["endRowIndex"] >= row_count:
+            continue
+        rng["endRowIndex"] = row_count
+        new_banded = dict(banded)
+        new_banded["range"] = rng
+        requests.append({"updateBanding": {"bandedRange": new_banded, "fields": "range"}})
+
+    for index, rule in enumerate(target.get("conditionalFormats", [])):
+        new_rule = dict(rule)
+        ranges, changed = [], False
+        for r in new_rule.get("ranges", []):
+            r = dict(r)
+            if r.get("endRowIndex") is not None and r["endRowIndex"] < row_count:
+                r["endRowIndex"] = row_count
+                changed = True
+            ranges.append(r)
+        if not changed:
+            continue
+        new_rule["ranges"] = ranges
+        requests.append({
+            "updateConditionalFormatRule": {
+                "index": index, "sheetId": sheet_id, "rule": new_rule
+            }
+        })
+
+    if requests:
+        spreadsheet.batch_update({"requests": requests})
+        print(f"  [INFO] 表の書式を{row_count}行目まで拡張しました（{len(requests)}件）")
+
+
 CANDIDATE_HEADERS = [
     "candidate_id",
     "created_at",

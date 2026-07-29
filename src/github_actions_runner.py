@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from .ebay_client import EbayClient
 from .sourcing import SourcingClient
 from .profit import calculate_profit
-from .sheets_client import GoogleSheetsClient
+from .sheets_client import GoogleSheetsClient, extend_table_formatting
 from .spreadsheet_mapping import INPUT_SHEET_COLUMNS
 from .search_base_client import SearchBaseClient
 
@@ -57,14 +57,23 @@ def ensure_row_exists(sheet_client, row_number: int) -> None:
     スプレッドシートには実グリッドの行数上限があり、それを超える行へ書くと
     「exceeds grid limits」で失敗する。ステータス更新の時点で例外になるため、
     結果が1件も書かれないまま静かに終わる（2026-07-29に実際に踏んだ）。
+
+    ⚠️ 行を足しただけでは縞模様や条件付き書式が付かず、見た目が崩れる。
+    必ず extend_table_formatting() で書式範囲も広げること。
     """
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
     if row_number > worksheet.row_count:
         # 余裕を持たせて追加し、連続実行のたびに拡張しなくて済むようにする
-        need = row_number - worksheet.row_count + 50
+        before = worksheet.row_count
+        need = row_number - before + 50
         worksheet.add_rows(need)
         print(f"  [INFO] シートの行数が不足していたため {need} 行追加しました "
-              f"（{worksheet.row_count} → {worksheet.row_count + need}）")
+              f"（{before} → {before + need}）")
+        try:
+            extend_table_formatting(sheet_client)
+        except Exception as e:
+            # 書式拡張に失敗しても書き込み自体は続行する（見た目の問題に留めるため）
+            print(f"  [WARN] 表の書式拡張に失敗しました（見た目のみの影響）: {e}")
 
 
 def is_row_occupied(sheet_client, row_number: int) -> bool:

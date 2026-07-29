@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from .ebay_client import EbayClient
 from .sourcing import SourcingClient
 from .profit import calculate_profit, max_affordable_source_jpy
-from .sheets_client import GoogleSheetsClient
+from .sheets_client import GoogleSheetsClient, extend_table_formatting
 from .spreadsheet_mapping import INPUT_SHEET_COLUMNS, COL_INDEX
 from .search_base_client import SearchBaseClient
 from .config_loader import load_all_configs
@@ -2179,6 +2179,14 @@ def _apply_row_validation(worksheet, row_number: int) -> None:
 def write_result_to_spreadsheet(sheet_client, data: dict):
     """テーブル内に行を追加してリサーチ結果を書き込む."""
     worksheet = sheet_client.spreadsheet.worksheet("入力シート")
+
+    # 縞模様や条件付き書式の適用範囲は行の増加に追従しないため、
+    # 範囲外の行に書くと表から浮いて見える。書く前に範囲を揃えておく
+    # （既に足りていれば何もしないので毎回呼んで問題ない）
+    try:
+        extend_table_formatting(sheet_client)
+    except Exception as e:
+        print(f"  [WARN] 表の書式拡張に失敗（見た目のみの影響）: {e}")
 
     # Prepare row data matching INPUT_SHEET_COLUMNS
     row_data = [""] * 25  # A〜Y列：25列固定

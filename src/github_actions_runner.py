@@ -403,8 +403,25 @@ def main():
             sold_signal=0
         )
 
-        # Get multiple offers (up to 3)
-        offers = sourcing_client.search_multiple_offers(listing, max_results=3)
+        # 有料APIを叩く前の足切り。
+        # 販売価格に対して手数料と国際送料を引いた時点で仕入予算が残らない商品は、
+        # どんなに安い仕入先を見つけても赤字なので、探すこと自体が無駄になる。
+        # （実測では6件中4件が赤字〜利益わずかで、そこにクレジットを払っていた）
+        from .config_loader import load_all_configs as _load_cfg
+        from .profit import max_affordable_source_jpy
+        _fee_rules = _load_cfg().fee_rules
+        budget_jpy = max_affordable_source_jpy(
+            ebay_price=ebay_price, ebay_shipping=ebay_shipping, fee_rules=_fee_rules
+        )
+        print(f"  [INFO] 仕入予算の上限: JPY {budget_jpy:,.0f}"
+              f"（販売${ebay_price:.2f}＋送料${ebay_shipping:.2f}から手数料・国際送料を差引）")
+        if budget_jpy <= 0:
+            print(f"  [SKIP] 販売価格が低すぎて仕入予算が残りません → 仕入先検索をスキップ（0クレジット）")
+            result_data["error"] = "販売価格が低く利益が出ない（仕入先検索せず）"
+            offers = []
+        else:
+            # Get multiple offers (up to 3)
+            offers = sourcing_client.search_multiple_offers(listing, max_results=3)
 
         if offers:
             print(f"  Found {len(offers)} offers:")
@@ -491,6 +508,9 @@ def main():
 
         print(f"\n{'='*60}")
         print(f"COMPLETED SUCCESSFULLY")
+        # 有料APIの消費量を毎回出す。見えないコストは削れないため
+        from .sourcing import credit_counter
+        print(f"  {credit_counter.report()}")
         print(f"{'='*60}")
 
         return 0

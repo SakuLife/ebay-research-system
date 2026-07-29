@@ -98,6 +98,36 @@ def _is_domestic_source(source: str) -> bool:
     return False
 
 
+# SerpApiは有料（1検索＝1クレジット）。どこで何回使ったかを実行中に数え、
+# 最後に単価つきで報告できるようにする。見えないコストは削れないため。
+class CreditCounter:
+    """SerpApiの消費クレジットを数える."""
+
+    # $75 Developerプラン（5,000検索）換算の単価
+    JPY_PER_CREDIT = 75 * 150 / 5000  # ≒2.25円
+
+    def __init__(self) -> None:
+        self.calls: Dict[str, int] = {}
+
+    def record(self, kind: str, n: int = 1) -> None:
+        self.calls[kind] = self.calls.get(kind, 0) + n
+
+    @property
+    def total(self) -> int:
+        return sum(self.calls.values())
+
+    def report(self) -> str:
+        if not self.total:
+            return "SerpApi消費: 0クレジット"
+        detail = " / ".join(f"{k}:{v}" for k, v in sorted(self.calls.items()))
+        yen = self.total * self.JPY_PER_CREDIT
+        return f"SerpApi消費: {self.total}クレジット（約{yen:.1f}円） [{detail}]"
+
+
+# 実行全体で共有するカウンター
+credit_counter = CreditCounter()
+
+
 class SourcingClient:
     def __init__(self) -> None:
         self.rakuten = RakutenClient(
@@ -158,6 +188,64 @@ class SourcingClient:
             return None
         return min(offers, key=lambda o: o.source_price_jpy + o.source_shipping_jpy)
 
+    # 「これ以上安く仕入れられても判断が変わらない」と見なす余裕率。
+    # 仕入値が上限のこの割合より下＝十分な利益が出ているので、
+    # より安い店を探すためにクレジットを使う価値が小さい
+    _SKIP_SERP_HEADROOM = 0.50
+
+    def _decide_serpapi_call(
+        self, mode: str, offers: List[SourceOffer], listing: ListingCandidate
+    ) -> tuple:
+        """SerpApi(有料)を呼ぶ価値があるかを判断する.
+
+        Returns: (呼ぶか, 呼ばない理由)
+
+        - always   : 毎回呼ぶ（最安値の精度は最大、クレジット消費も最大）
+        - fallback : 直APIが0件のときだけ（消費最小、楽天より安い店を取り逃す）
+        - smart    : 既定。直APIの仕入値が「上限の半額以下」＝利益に十分な余裕が
+                     ある商品だけ省く。
+
+        ⚠️ 判定には `max_affordable_source_jpy()` を使い、実際の利益計算と
+        同じ式（手数料・国際送料込み）で見る。
+        独自の概算式（手取り率75%等）で判断したところ、国際送料を無視したせいで
+        利益率38%と誤判定し、実際は¥288しか出ない商品でSerpApiを省いて
+        より安い店（利益¥1,169）を取り逃した。安さの判定は必ず本式で行うこと。
+        """
+        if not self.serpapi.is_enabled:
+            return False, "SerpApi無効"
+        if not offers:
+            return True, ""
+        if mode == "always":
+            return True, ""
+        if mode == "fallback":
+            return False, "SOURCING_SERPAPI_MODE=fallback・直APIで取得済み"
+
+        # smart: 実際の利益計算と同じ式で「仕入値の上限」を求めて比較する
+        from .config_loader import load_all_configs
+        from .profit import max_affordable_source_jpy
+
+        try:
+            fee_rules = load_all_configs().fee_rules
+        except Exception:
+            return True, ""
+
+        ceiling = max_affordable_source_jpy(
+            ebay_price=listing.ebay_price,
+            ebay_shipping=listing.ebay_shipping,
+            fee_rules=fee_rules,
+        )
+        if ceiling <= 0:
+            return True, ""
+
+        cheapest = min(o.source_price_jpy + o.source_shipping_jpy for o in offers)
+        ratio = cheapest / ceiling
+        if ratio <= self._SKIP_SERP_HEADROOM:
+            return False, (
+                f"仕入値¥{cheapest:,.0f}が上限¥{ceiling:,.0f}の{ratio:.0%}＝利益に余裕があるため"
+                f"省略・1クレジット節約"
+            )
+        return True, ""
+
     def search_multiple_offers(self, listing: ListingCandidate, max_results: int = 3) -> List[SourceOffer]:
         """Search for multiple sourcing offers from all enabled sources, sorted by total price."""
         offers = []
@@ -198,20 +286,19 @@ class SourcingClient:
         #
         # SerpApiは有料。クレジットを絞りたい場合は SOURCING_SERPAPI_MODE=fallback で
         # 従来の「直APIが0件のときだけ」に戻せる。
-        serp_mode = os.getenv("SOURCING_SERPAPI_MODE", "always").strip().lower()
-        should_call_serp = self.serpapi.is_enabled and (
-            serp_mode == "always" or not offers
-        )
+        serp_mode = os.getenv("SOURCING_SERPAPI_MODE", "smart").strip().lower()
+        should_call_serp, skip_reason = self._decide_serpapi_call(serp_mode, offers, listing)
         if should_call_serp:
             reason = "全経路から最安を採るため" if offers else "直APIが0件のため"
             print(f"  [DEBUG] SerpApi(Google Shopping)検索: {reason}")
             serp_offers = self.serpapi.search_google_shopping(
                 listing.search_query, max_results=max_results * 2
             )
+            credit_counter.record("google_shopping")
             print(f"  [DEBUG] SerpApi検索結果: {len(serp_offers)}件")
             offers.extend(serp_offers)
         elif self.serpapi.is_enabled:
-            print(f"  [DEBUG] SerpApi検索: スキップ（SOURCING_SERPAPI_MODE=fallback・直APIで取得済み）")
+            print(f"  [DEBUG] SerpApi検索: スキップ（{skip_reason}）")
 
         if not offers:
             return []

@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from .ebay_client import EbayClient
 from .sourcing import SourcingClient
-from .profit import calculate_profit
+from .profit import calculate_profit, max_affordable_source_jpy
 from .sheets_client import GoogleSheetsClient
 from .spreadsheet_mapping import INPUT_SHEET_COLUMNS, COL_INDEX
 from .search_base_client import SearchBaseClient
@@ -2425,6 +2425,7 @@ def main():
         "no_source": 0,          # 仕入先なし
         "gemini_reject": 0,      # Gemini検証NG
         "limited_product": 0,    # 限定品/プロモ
+        "budget_too_low": 0,     # 販売価格が低く仕入予算が残らない（有料API前に足切り）
         "other": 0,              # その他
     }
     keyword_stats: dict[str, dict[str, int]] = {}  # E列キーワード別の集計
@@ -2864,6 +2865,28 @@ def main():
                 best_source = None
                 top_sources: List[RankedSource] = []
                 search_method = ""
+
+            # === 有料API前の足切り: 仕入予算が残らない商品は探索そのものを省く ===
+            # 販売価格からeBay手数料と国際送料を引いた時点で予算が残らない、
+            # または最低利益額に届き得ない商品は、どんな仕入先を見つけても採用されない。
+            # ここで弾けば Web(EN)/Lens のSerpAPIクレジットを丸ごと節約できる。
+            # （2026-07-29: 実測6件中4件が赤字〜利益わずかで、そこに課金していた）
+            if not cache_hit:
+                _budget = max_affordable_source_jpy(
+                    ebay_price=ebay_price,
+                    ebay_shipping=ebay_shipping,
+                    fee_rules=configs.fee_rules,
+                    min_profit_jpy=min_profit_jpy or 0,
+                )
+                if _budget <= 0:
+                    _need = f"（最低利益 JPY {min_profit_jpy:,} 込み）" if min_profit_jpy else ""
+                    print(f"\n[4/5] Searching domestic sources...")
+                    print(f"  [SKIP] 仕入予算の上限が JPY {_budget:,.0f}{_need} → "
+                          f"どの仕入先でも条件を満たさないため検索せず（SerpAPIクレジット節約）")
+                    skip_reasons["budget_too_low"] = skip_reasons.get("budget_too_low", 0) + 1
+                    skipped_this_keyword += 1
+                    continue
+                print(f"  [INFO] 仕入予算の上限: JPY {_budget:,.0f}")
 
             print(f"\n[4/5] {'Using cached results (search skipped)' if cache_hit else 'Searching domestic sources...'}")
 
@@ -4184,6 +4207,8 @@ def main():
         print(f"  Gemini validation NG: {skip_reasons['gemini_reject']}")
     if skip_reasons["limited_product"] > 0:
         print(f"  Limited/Graded/Card: {skip_reasons['limited_product']}")
+    if skip_reasons["budget_too_low"] > 0:
+        print(f"  仕入予算不足で検索せず（クレジット節約）: {skip_reasons['budget_too_low']}")
     if skip_reasons["other"] > 0:
         print(f"  Other: {skip_reasons['other']}")
     if timeout_reached:

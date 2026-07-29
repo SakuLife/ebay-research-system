@@ -30,7 +30,8 @@ class GeminiListingGenerator:
     def __init__(self, api_key: Optional[str], model: Optional[str]) -> None:
         if not api_key:
             raise ValueError("GEMINI_API_KEY is not set.")
-        self.model_name = model or "gemini-1.5-flash"
+        # バージョン直書きは提供終了で404になる（gemini-1.5-flashは廃止済み）。-latestは現行世代に自動追従
+        self.model_name = model or "gemini-flash-latest"
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(self.model_name)
 

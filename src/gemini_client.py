@@ -186,11 +186,13 @@ class GeminiClient:
         Args:
             api_key: Gemini API key. If not provided, reads from GEMINI_API_KEY env var.
             model_name: Model name to use. If not provided, reads GEMINI_MODEL env var
-                (default: gemini-2.5-flash). 旧デフォルトの gemini-2.0-flash は廃止済み(404)。
+                (default: gemini-flash-latest)。
+                バージョン直書きは提供終了で404になる（2.0-flash→2.5-flashと2度踏んだ）。
+                `-latest` エイリアスは常に現行世代を指すので落ちない。
         """
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         # 引数を明示指定したときのみ優先。未指定なら環境変数→現行モデルの順で解決。
-        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-flash-latest")
         self.is_enabled = bool(self.api_key) and GEMINI_AVAILABLE
 
         if not GEMINI_AVAILABLE:

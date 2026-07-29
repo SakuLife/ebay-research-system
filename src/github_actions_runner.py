@@ -51,6 +51,22 @@ def update_status(sheet_client, row_number: int, status: str, log: str = ""):
     print(f"  [STATUS] Row {row_number}: {status}")
 
 
+def ensure_row_exists(sheet_client, row_number: int) -> None:
+    """書き込み先の行がシートの行数を超えていたら行を追加する.
+
+    スプレッドシートには実グリッドの行数上限があり、それを超える行へ書くと
+    「exceeds grid limits」で失敗する。ステータス更新の時点で例外になるため、
+    結果が1件も書かれないまま静かに終わる（2026-07-29に実際に踏んだ）。
+    """
+    worksheet = sheet_client.spreadsheet.worksheet("入力シート")
+    if row_number > worksheet.row_count:
+        # 余裕を持たせて追加し、連続実行のたびに拡張しなくて済むようにする
+        need = row_number - worksheet.row_count + 50
+        worksheet.add_rows(need)
+        print(f"  [INFO] シートの行数が不足していたため {need} 行追加しました "
+              f"（{worksheet.row_count} → {worksheet.row_count + need}）")
+
+
 def is_row_occupied(sheet_client, row_number: int) -> bool:
     """指定行に既存データがあるか判定する（処理開始前に呼ぶこと）.
 
@@ -185,7 +201,9 @@ def main():
         print(f"[WARNING] Row {args.row} may already contain data (last row is {last_row})")
         print(f"[INFO] Consider using row {last_row + 1} for new data")
 
-    # 既存データの有無は、自分がステータスを書き込む前に判定する
+    # 書き込み先の行を確保してから、既存データの有無を判定する
+    # （判定は自分がステータスを書き込む前に行うこと）
+    ensure_row_exists(sheets_client, args.row)
     row_was_occupied = is_row_occupied(sheets_client, args.row)
 
     result_data = {

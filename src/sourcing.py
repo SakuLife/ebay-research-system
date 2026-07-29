@@ -38,6 +38,66 @@ def _describe_request_error(exc: requests.RequestException) -> str:
     return f"HTTP {resp.status_code}{' - ' + detail if detail else ''}"
 
 
+# Google Shopping（gl=jp）でも海外通販が混ざる。実際に
+# vvs-automatismes.fr（仏）や osbrankoradicevicobilic.edu.rs（セルビア）が
+# 「国内最安」として採用されかけた。要件は国内仕入なので明示的に弾く。
+#
+# 判定方針: 日本の店は店名が日本語か、よく知られたブランド名で返る。
+# 海外の雑多なサイトは生ドメイン文字列で返る、という差を使う。
+_DOMESTIC_SHOP_HINTS = (
+    "楽天", "rakuten", "amazon", "yahoo", "ヤフー", "paypay", "au pay",
+    "ヨドバシ", "yodobashi", "ビックカメラ", "biccamera", "ジョーシン", "joshin",
+    "エディオン", "edion", "ケーズデンキ", "ノジマ", "ヤマダ", "yamada",
+    "コストコ", "costco", "ロハコ", "lohaco", "アスクル", "askul",
+    "セブンネット", "ロフト", "loft", "東急ハンズ", "ハンズ", "hands",
+    "ドン・キホーテ", "ドンキ", "qoo10", "roomclip", "モノタロウ", "monotaro",
+    "サウンドハウス", "soundhouse", "駿河屋", "あみあみ", "amiami",
+    "ヨドバシカメラ", "マツキヨ", "ウエルシア", "スギ薬局", "ココカラ",
+    "公式", "オンライン", "ショッピング", "ストア", "市場", "本店", "通販",
+    # 国内ECプラットフォーム（個人店がこの形で出てくる）
+    "base.shop", "thebase", "stores.jp", "shop-pro", "makeshop", "ocnk",
+    "buyee", "zozo", "magaseek", "locondo", "shoplist",
+    # 国内量販・専門店（ASCII表記で返ることがある）
+    "nitori", "ニトリ", "muji", "無印", "uniqlo", "ユニクロ", "hmv", "tower",
+    "animate", "アニメイト", "sofmap", "ソフマップ", "tsukumo", "ツクモ",
+    "dospara", "ドスパラ", "kojima", "コジマ", "cainz", "カインズ",
+    "workman", "ワークマン", "kohnan", "コーナン", "dinos", "nissen",
+)
+
+
+def _is_domestic_source(source: str) -> bool:
+    """SerpApiの source（店名）が国内ショップかを判定する.
+
+    **国内である積極的な根拠がある場合だけ通す**（ホワイトリスト方式）。
+    根拠は「日本語を含む」「既知の国内ショップ名」「.jp ドメイン」のいずれか。
+
+    当初は「生ドメインらしい文字列だけ弾く」ブラックリスト方式にしていたが、
+    `Dorothea Design`（万年筆を楽天の1/3の値段で出す欧州系）のような
+    ASCII表記の海外ショップが素通りし、非現実的な利益額が出た。
+    実データ上、国内店は「楽天市場 - 店名」「Amazon公式サイト」「ヤマダデンキ」
+    のように日本語か既知ブランドで返るため、ホワイトリスト方式で実害が少ない。
+
+    判定を誤って弾いた店は `_DOMESTIC_SHOP_HINTS` に追記して救済する
+    （除外件数はログに出るので、取りこぼしが多ければ気付ける）。
+    """
+    if not source:
+        return False
+    s = source.strip().lower()
+
+    # 日本語（ひらがな・カタカナ・漢字）を含めば国内
+    if any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in source):
+        return True
+
+    for hint in _DOMESTIC_SHOP_HINTS:
+        if hint in s:
+            return True
+
+    if ".jp" in s:
+        return True
+
+    return False
+
+
 class SourcingClient:
     def __init__(self) -> None:
         self.rakuten = RakutenClient(
@@ -129,23 +189,47 @@ class SourcingClient:
         else:
             print(f"  [DEBUG] Yahoo!ショッピング検索: 無効（APIキー未設定）")
 
-        # 直APIが全滅したときだけSerpApi(Google Shopping)で代替検索する。
-        # SerpApiは有料（無料枠100回/月）なので、通常時は課金しないようフォールバック限定。
-        # 2026-07-28時点: 楽天=503メンテ / Amazon PA-API=403（資格要件未達）で直APIが取れない
-        if not offers and self.serpapi.is_enabled:
-            print(f"  [DEBUG] 直APIが0件 → SerpApi(Google Shopping)でフォールバック検索")
+        # SerpApi(Google Shopping)は楽天・Amazon・Yahoo・ヨドバシ等を横断して引ける。
+        #
+        # ⚠️ 「直APIが0件のときだけ呼ぶ」フォールバック方式にすると、
+        #    楽天に在庫があった時点で探索を打ち切るため、楽天より安い他店
+        #    （コストコ・ヨドバシ等）を取り逃す。要件は「多数ある国内販売サイトから
+        #    最安値を見つける」なので、既定では毎回呼んで全経路の和から最安を採る。
+        #
+        # SerpApiは有料。クレジットを絞りたい場合は SOURCING_SERPAPI_MODE=fallback で
+        # 従来の「直APIが0件のときだけ」に戻せる。
+        serp_mode = os.getenv("SOURCING_SERPAPI_MODE", "always").strip().lower()
+        should_call_serp = self.serpapi.is_enabled and (
+            serp_mode == "always" or not offers
+        )
+        if should_call_serp:
+            reason = "全経路から最安を採るため" if offers else "直APIが0件のため"
+            print(f"  [DEBUG] SerpApi(Google Shopping)検索: {reason}")
             serp_offers = self.serpapi.search_google_shopping(
                 listing.search_query, max_results=max_results * 2
             )
             print(f"  [DEBUG] SerpApi検索結果: {len(serp_offers)}件")
             offers.extend(serp_offers)
+        elif self.serpapi.is_enabled:
+            print(f"  [DEBUG] SerpApi検索: スキップ（SOURCING_SERPAPI_MODE=fallback・直APIで取得済み）")
 
-        # Sort by total price (price + shipping) and return top N
         if not offers:
             return []
 
-        offers.sort(key=lambda o: o.source_price_jpy + o.source_shipping_jpy)
-        return offers[:max_results]
+        # 同一URLの重複を除去（楽天直APIとSerpApi経由で同じ商品が来ることがある）
+        deduped: List[SourceOffer] = []
+        seen_urls: set = set()
+        for offer in offers:
+            key = (offer.source_url or "").split("?")[0]
+            if key and key in seen_urls:
+                continue
+            if key:
+                seen_urls.add(key)
+            deduped.append(offer)
+
+        # Sort by total price (price + shipping) and return top N
+        deduped.sort(key=lambda o: o.source_price_jpy + o.source_shipping_jpy)
+        return deduped[:max_results]
 
     def search_all_sites(self, keyword: str, max_results: int = 3) -> List[SourceOffer]:
         """Search all sites including SerpApi (Google Shopping) for comprehensive results."""
@@ -770,7 +854,17 @@ class SerpApiClient:
 
         offers = []
         used_excluded = 0
+        foreign_excluded = 0
+        foreign_names: List[str] = []
         for item in shopping_results:
+            # 海外ショップを除外。要件は「国内仕入先」なので、
+            # Google Shoppingに混ざる海外通販（.fr / .rs 等）を採用してはいけない
+            src_name = item.get("source", "")
+            if not _is_domestic_source(src_name):
+                foreign_excluded += 1
+                foreign_names.append(src_name)
+                continue
+
             # 中古を除外（楽天クライアントと同じ判定を流用）。
             # Google Shoppingはメルカリ等のC2C中古が最安に並ぶため、
             # 除外しないと新品前提の利益計算が非現実的な数字になる
@@ -806,6 +900,11 @@ class SerpApiClient:
 
         if used_excluded > 0:
             print(f"    [SerpApi] 中古品除外: {used_excluded}件")
+        if foreign_excluded > 0:
+            # 除外した店名を出す。国内店を誤って弾いていたら
+            # _DOMESTIC_SHOP_HINTS に追記して救済できるようにするため
+            names = ", ".join(dict.fromkeys(n for n in foreign_names if n))
+            print(f"    [SerpApi] 国内以外として除外: {foreign_excluded}件 ({names[:90]})")
 
         # Sort by price
         offers.sort(key=lambda o: o.source_price_jpy)

@@ -2276,6 +2276,33 @@ def main():
     print(f"eBay AUTO RESEARCH PIPELINE (Pattern②)")
     print(f"="*60)
 
+    # === 起動時の自己診断 ===
+    # Geminiは「同一商品かどうか」の最終判定を担っている。ここが落ちていると
+    # 検証を通らないまま別商品が仕入先として書き込まれ、しかも利益額が
+    # それらしく出るため、見ただけでは異常と分からない。
+    #
+    # 2026-07-29のクラウド実行で実際に発生: Gemini呼び出しが全て失敗し、
+    # 「BANDAI」に対して呪術廻戦の単行本やiPhoneケースが仕入先として
+    # 書き込まれた（利益¥240,227などの非現実的な数字つき）。
+    # ローカルでは同じキーが正常だったため、環境差（Secret未更新など）が原因。
+    #
+    # 実際に1回生成して生死を確かめる。一覧APIや設定値は当てにならない。
+    _probe = GeminiClient()
+    if not _probe.is_enabled:
+        print("  [CRITICAL] Geminiが無効です（APIキー未設定）。")
+        print("             同一商品の検証が行われず、別商品が混入します。")
+    else:
+        try:
+            _probe.model.generate_content("ping")
+            print(f"  [OK] Gemini疎通確認: {_probe.model_name}")
+        except Exception as e:
+            print("  " + "!" * 56)
+            print(f"  [CRITICAL] Geminiが応答しません: {type(e).__name__}: {str(e)[:120]}")
+            print("             このまま実行すると同一商品の検証が行われず、")
+            print("             別商品が仕入先として書き込まれます。")
+            print("             GEMINI_API_KEY を確認してください。")
+            print("  " + "!" * 56)
+
     # タイムアウト管理（長時間実行対応）
     pipeline_start_time = time.time()
     MAX_RUNTIME_SECONDS = 6 * 60 * 60  # 6時間（GitHub Actions上限）

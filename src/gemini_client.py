@@ -148,8 +148,12 @@ def get_gemini_usage_summary() -> dict:
     total_input = sum(c.get("input_tokens", 0) for c in calls)
     total_output = sum(c.get("output_tokens", 0) for c in calls)
 
-    # Gemini 2.0 Flash pricing (2024): $0.10/1M input, $0.40/1M output
-    cost_usd = (total_input / 1_000_000 * 0.10) + (total_output / 1_000_000 * 0.40)
+    # gemini-flash-latest（3.5 Flash相当）の有料単価: $1.50/1M入力, $9.00/1M出力
+    # ⚠️ 2026-07-29まで 2.0 Flash 時代の $0.10/$0.40 のままで、
+    #    実費を15〜22倍も過小に表示していた（無料枠で回していて誰も気付かなかった）。
+    #    モデルを変えたら必ずここも直すこと。
+    # ※無料枠で運用している間は実際には課金されない（制限超過はエラーになるだけ）
+    cost_usd = (total_input / 1_000_000 * 1.50) + (total_output / 1_000_000 * 9.00)
 
     # USD -> JPY (レート約150円)
     cost_jpy = int(cost_usd * 150)

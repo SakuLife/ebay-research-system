@@ -387,18 +387,25 @@ python tests/bench_cheapest_hitrate.py --run               # 打率を測る
 `*.rakuten.com`）をそのまま入れてはいけない**。楽天所有ドメインを名乗ると
 `403 Access from this IP address is not allowed` でIP許可リストに弾かれる。
 
-Referer の実挙動（2026-07-29 実測。ネット記事の説明とは異なる）:
+**Referer は必須**（2026-07-29 実測で確定）。`RAKUTEN_REFERER` に
+**Allowed websites に登録したドメイン**を設定しないと `403 REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING` になる。
 
-| 送る Referer | 結果 |
+⚠️ **測定の落とし穴**: 未登録のアプリID／ダミーのaccessKeyで試すと、Refererを送らなくても
+「Invalid Access Key」まで到達するため**「Refererは不要」と誤解する**。
+正規のキーで叩いて初めてRefererが要求される。**検査は accessKey より前段にある。**
+＝ 本物のキーを手にするまで、この仕様は正しく測れない（社訓「メタデータは嘘をつく」の実例）。
+
+| 送る Referer | 登録済みキーでの結果 |
 |---|---|
-| ヘッダー無し | accessKey の検証まで進む（**Refererは必須ではない**） |
-| 自分のドメイン | 同上。素通りする |
-| `webservice.rakuten.co.jp` | **403 IP許可リスト違反** |
-| `localhost` | **503 Authentication service error** |
+| ヘッダー無し | **403 HTTP_REFERRER_MISSING** |
+| `https://github.com/`（Allowed websitesに登録済み） | **200 OK** |
+| `webservice.rakuten.co.jp` | 403 IP許可リスト違反 |
+| `localhost` | 503 Authentication service error |
 
-＝ **本当の関門は accessKey**。よってコードは既定でRefererを送らない。
-`HTTP_REFERRER_MISSING` / `NOT_ALLOWED` が出たときだけ `RAKUTEN_REFERER` に
-Allowed websites と一致する値を設定する。
+**レスポンス構造は旧仕様のまま**（`Items[].Item` の入れ子）。フィールド名も
+`itemName` / `itemPrice` / `itemUrl` / `shopName` / `availability` / `postageFlag` /
+`mediumImageUrls` が従来どおり使える（2026-07-29 実データで確認）。
+`affiliateId` も有効で、`itemUrl` がアフィリエイトリンク（`hb.afl.rakuten.co.jp`）になる。
 
 対応: `RAKUTEN_ACCESS_KEY` を楽天ウェブサービスのアプリ管理画面から取得して `.env` に設定する。
 未設定の間は `RakutenClient.is_enabled` が False になり、警告を出して自動的にSerpApiへ回る。

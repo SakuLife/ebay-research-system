@@ -200,16 +200,16 @@ class MockSourcingClient(SourcingClient):
 RAKUTEN_API_BASE = "https://openapi.rakuten.co.jp/ichibams/api"
 RAKUTEN_ICHIBA_VERSION = "20260701"
 
-# Referer の扱い（2026-07-29 実測。ネット上の記事とは挙動が違うので注意）
-#   ヘッダー無し                    → accessKey の検証まで進む（Refererは必須ではない）
-#   自分のドメイン                  → 同上。素通りする
-#   webservice.rakuten.co.jp を名乗る → 403 "Access from this IP address is not allowed"
-#                                      ＝楽天所有ドメインを騙るとIP許可リストで弾かれる
-#   localhost                       → 503 "Authentication service error"
-# よって既定では Referer を送らない。アプリ登録の Allowed websites の設定によって
-# HTTP_REFERRER_MISSING / NOT_ALLOWED が出た場合のみ RAKUTEN_REFERER で指定する。
-# ⚠️ 楽天のドメイン（rakuten.co.jp 等）を入れてはいけない。アプリ登録フォームの
-#    プレースホルダにその例が薄字で出ているが、真似るとIP制限に当たる。
+# Referer は必須（2026-07-29 実測で確定）。
+# アプリ登録時の Allowed websites に入れたドメインを送らないと
+# 403 REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING で弾かれる。
+#
+# ⚠️ 測定の落とし穴: 未登録のIDやダミーのaccessKeyで試すと、Refererを送らなくても
+#    「Invalid Access Key」まで到達するため「Refererは不要」と誤解する。
+#    正規キーで初めて要求される（検査はaccessKeyより前段）。
+# ⚠️ 楽天所有ドメイン（rakuten.co.jp 等）を名乗ると 403 IP許可リスト違反。
+#    アプリ登録フォームのプレースホルダにその例が薄字で出ているが真似ないこと。
+#    localhost も 503 になるため使えない。
 RAKUTEN_DEFAULT_REFERER = ""
 
 

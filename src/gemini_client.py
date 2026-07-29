@@ -203,6 +203,42 @@ class GeminiClient:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
 
+    # レート制限に当たったときの待ち時間（秒）。指数的に伸ばす
+    _RETRY_WAITS = (5, 15, 40)
+
+    def _generate(self, content):
+        """Geminiに生成を投げる。レート制限なら待って再試行する.
+
+        ⚠️ 無料枠は1分あたりの呼び出し回数に上限があり、パイプラインを
+        高速に回すと 429 / ResourceExhausted で落ちる。リトライが無いと
+        「同一商品の検証」が素通りし、別商品が仕入先として書き込まれる
+        （2026-07-29のクラウド実行で6行中5行がこれで汚染された）。
+
+        レート制限以外のエラーは即座に投げ直す（待っても直らないため）。
+        """
+        import time
+
+        last_error = None
+        for attempt, wait in enumerate((0,) + self._RETRY_WAITS):
+            if wait:
+                time.sleep(wait)
+            try:
+                return self.model.generate_content(content)
+            except Exception as e:
+                message = f"{type(e).__name__}: {e}".lower()
+                is_rate_limit = any(
+                    k in message for k in
+                    ("429", "resource_exhausted", "resourceexhausted",
+                     "rate limit", "quota", "too many requests")
+                )
+                last_error = e
+                if not is_rate_limit:
+                    raise
+                if attempt < len(self._RETRY_WAITS):
+                    print(f"  [Gemini] レート制限 → {self._RETRY_WAITS[attempt]}秒待って再試行"
+                          f"（{attempt + 1}/{len(self._RETRY_WAITS)}）")
+        raise last_error
+
     def translate_product_name(self, english_title: str) -> Optional[str]:
         """
         eBayの英語商品名を日本語の検索キーワードに翻訳する.
@@ -228,7 +264,7 @@ class GeminiClient:
 日本語キーワード:'''
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self._generate(prompt)
             result = response.text.strip()
             # 余計な改行や空白を除去
             result = ' '.join(result.split())
@@ -282,7 +318,7 @@ class GeminiClient:
             image_part = _download_image_as_part(image_url)
             if not image_part:
                 return None
-            response = self.model.generate_content([
+            response = self._generate([
                 prompt,
                 image_part,
             ])
@@ -326,7 +362,7 @@ class GeminiClient:
 型番/番号:'''
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self._generate(prompt)
             result = response.text.strip()
             _log_gemini_call("extract", len(prompt) // 4, len(result) // 4)
             if result == "なし" or not result:
@@ -365,7 +401,7 @@ class GeminiClient:
 必須キーワード:'''
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self._generate(prompt)
             result = response.text.strip()
             result = ' '.join(result.split())
             _log_gemini_call("extract_keywords", len(prompt) // 4, len(result) // 4)
@@ -445,7 +481,7 @@ class GeminiClient:
 それでは調査結果を出力してください:'''
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self._generate(prompt)
             result = response.text.strip()
             _log_gemini_call("weight", len(prompt) // 4, len(result) // 4)
             return self._parse_weight_research_result(result)
@@ -642,7 +678,7 @@ ISSUES: [問題点をカンマ区切りで。なければ「なし」]
 それでは判断してください:'''
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self._generate(prompt)
             result = response.text.strip()
             _log_gemini_call("validate", len(prompt) // 4, len(result) // 4)
             return self._parse_validation_result(result)
@@ -814,17 +850,17 @@ DETAILS: [画像から読み取った詳細（1行）]
             # 画像をダウンロードしてバイナリで送信
             image_part = _download_image_as_part(image_url)
             if image_part:
-                response = self.model.generate_content([prompt, image_part])
+                response = self._generate([prompt, image_part])
             else:
                 # 画像ダウンロード失敗 → タイトルのみで判定
-                response = self.model.generate_content(prompt)
+                response = self._generate(prompt)
             result = response.text.strip()
             _log_gemini_call("image_analysis", len(prompt) // 4 + 500, len(result) // 4)
             return self._parse_image_analysis_result(result)
         except Exception as e:
             # フォールバック: タイトルのみで判定
             try:
-                response = self.model.generate_content(prompt)
+                response = self._generate(prompt)
                 result = response.text.strip()
                 _log_gemini_call("image_analysis", len(prompt) // 4, len(result) // 4)
                 return self._parse_image_analysis_result(result)
@@ -932,7 +968,7 @@ REASON: [1行で理由]'''
                 print(f"  [Gemini画像比較] 画像ダウンロード失敗 → スキップ")
                 return None
 
-            response = self.model.generate_content([
+            response = self._generate([
                 prompt,
                 ebay_img,
                 source_img,
@@ -1034,7 +1070,7 @@ DETAILS: [Web検索結果から読み取った情報（1-2行）]
 それでは分析してください:'''
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self._generate(prompt)
             result = response.text.strip()
             _log_gemini_call("web_prescreen", len(prompt) // 4, len(result) // 4)
             return self._parse_web_prescreen_result(result)

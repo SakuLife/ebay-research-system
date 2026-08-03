@@ -16,6 +16,7 @@ from src.ebay_client import (  # noqa: E402
     title_similarity,
     _model_tokens,
     models_match,
+    is_variation_listing,
 )
 
 
@@ -90,3 +91,25 @@ class TestAccessoryListing:
     def test_本体の出品は除外しない(self):
         assert not is_accessory_listing("Zojirushi NS-TSC10 Micom Rice Cooker 5.5 Cup")
         assert not is_accessory_listing("Sony WH-1000XM4 Headphones with Case")
+
+
+class TestVariationListing:
+    """サイズ選択式の出品の判定.
+
+    1つの出品に200ml/500ml/2500mlが同居していると、APIは最小サイズの
+    価格を返す。これを同一商品として扱うと、2500gの商品に対して200mlの
+    価格を「より安い出品」と誤判定する（2026-08-03に実データで発生）。
+    """
+
+    def test_バリエーション付きは除外対象(self):
+        # 実際に誤検出したItemID（Milbon 200g/500g/1000g/2500g selectable）
+        assert is_variation_listing("v1|315393561123|613879495027")
+        assert is_variation_listing("v1|315377761082|613861328665")
+
+    def test_通常の単品出品は対象外(self):
+        assert not is_variation_listing("v1|168537955085|0")
+        assert not is_variation_listing("v1|127968171483|0")
+
+    def test_想定外の形式でも落ちない(self):
+        assert not is_variation_listing("")
+        assert not is_variation_listing("123456")

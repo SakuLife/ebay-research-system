@@ -147,6 +147,20 @@ def title_similarity(title_a: str, title_b: str) -> float:
     return max(char_score, token_score)
 
 
+def is_variation_listing(item_id: str) -> bool:
+    """サイズ・色などのバリエーションを1つにまとめた出品か判定する.
+
+    Browse API の itemId は `v1|<出品ID>|<バリエーションID>` の形。
+    バリエーションIDが 0 以外なら、返ってきた価格は**そのバリエーション固有**の値で、
+    多くの場合「一番安いサイズ」の価格になる。
+
+    これを同一商品として扱うと、2500gの商品に対して同じ出品の200mlの価格を
+    「より安い同一商品」と誤判定する（2026-08-03に実データで確認）。
+    """
+    parts = item_id.split("|")
+    return len(parts) >= 3 and parts[2] not in ("", "0")
+
+
 def is_accessory_listing(title: str) -> bool:
     """本体ではなく付属品・部品・説明書のみの出品か判定する."""
     lowered = title.lower()
@@ -879,10 +893,22 @@ class EbayClient:
         candidates: list[dict] = []
         skipped_self = 0
         skipped_accessory = 0
+        skipped_variation = 0
         for item in items:
             item_id = item.get("itemId", "")
             if exclude_id and exclude_id in item_id:
                 skipped_self += 1
+                continue
+
+            # サイズ選択式の出品（1つの出品に200ml/500ml/2500mlが同居）を除外する。
+            # Browse APIはこの手の出品に対し「最小サイズの価格」を返してくるため、
+            # 2500gの商品に対して200mlの価格を「より安い同一商品」と誤判定する。
+            # 2026-08-03に実データで確認:
+            #   2500g詰替($289)に対し、同一出品の200ml($61)を最安として拾っていた。
+            # itemIdの3番目が0以外＝特定バリエーションを指しており、
+            # その価格は商品全体の価格ではないので候補から外す。
+            if is_variation_listing(item_id):
+                skipped_variation += 1
                 continue
 
             title = item.get("title", "")
@@ -1035,6 +1061,9 @@ class EbayClient:
 
         if skipped_accessory:
             print(f"  [最安値検索] 付属品・部品のみの出品を除外: {skipped_accessory}件")
+        if skipped_variation:
+            print(f"  [最安値検索] サイズ選択式の出品を除外: {skipped_variation}件"
+                  f"（最小サイズの価格を拾うため）")
 
         if not best_match:
             print(f"  [最安値検索] 同一商品のアクティブリスティングなし（候補{len(candidates)}件中マッチなし）")
